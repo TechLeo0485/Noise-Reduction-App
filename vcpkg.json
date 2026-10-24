@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "voicestudio",
+  "version-string": "0.2.0",
+  "description": "Optional vcpkg manifest. Qt is expected from the official installer/aqtinstall (building Qt through vcpkg takes hours); RNNoise is fetched by CMake because it has no vcpkg port with the bundled model.",
+  "dependencies": [
+    "gtest"
+  ]
+}

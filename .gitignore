@@ -1,0 +1,46 @@
+# Build output (CMake presets write to build/<preset>; installers go to dist/)
+build/
+out/
+dist/
+cmake-build-*/
+
+# Personal CMake presets (CMakePresets.json itself is shared and committed)
+CMakeUserPresets.json
+
+# vcpkg manifest-mode install tree
+vcpkg_installed/
+
+# Visual Studio / VS Code / CLion / Qt Creator
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+CMakeLists.txt.user*
+
+# Compiled / generated artefacts that may land outside build/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.dmp
+
+# Logs and local test output
+*.log
+build-log.txt
+soak*.csv
+results/
+
+# Python helpers (offline evaluation scripts)
+__pycache__/
+*.pyc
+.venv/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
