@@ -15,6 +15,8 @@ add_executable(vs_unit_tests
     unit/test_stats.cpp
     audio/test_processing_chain.cpp
     audio/test_suppressors.cpp
+    audio/test_voice_isolator.cpp
+    unit/test_voxlock_stream.cpp
     integration/test_settings_store.cpp
     performance/test_chain_performance.cpp)
 target_include_directories(vs_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

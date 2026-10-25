@@ -52,6 +52,9 @@ enum class ParamId : std::uint16_t {
     PitchEnabled,
     PitchSemitones,
 
+    // Strict voice isolation (VoxLock): only the enrolled voice passes; silence otherwise.
+    IsolationEnabled,
+
     Count
 };
 

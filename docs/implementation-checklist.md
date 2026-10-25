@@ -62,7 +62,7 @@ Legend: **[x]** implemented in code · **[v]** verified by building and running 
 - [x] Logging (privacy-safe), minidumps, diagnostics report
 - [x] Soak-test tool (`vs_soak`) and procedure
 - [x] Installer script (Inno Setup) and deploy step (windeployqt via CMake install)
-- [ ] Target-speaker isolation (experimental; enrollment stored locally, deletable)
+- [x] Target-speaker isolation: strict voice isolation with VoxLock INT8 Full (enrollment stored locally, deletable, fail-closed)
 - [ ] Suspend/resume verified on real hardware
 - [ ] Code signing
 - [ ] Optional per-packet DSP-only path to remove 10 ms framing in DSP mode

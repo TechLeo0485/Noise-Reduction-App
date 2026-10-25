@@ -28,7 +28,7 @@ cable as their microphone. Everything runs on your machine: no cloud, no account
 | Live metrics: P50/P95/P99 timings, dropouts, drift, latency breakdown, CPU, memory | Implemented |
 | Virtual cable test and loopback latency measurement | Implemented |
 | Advanced AI (ONNX Runtime, GPU/NPU) | **Not in this build**: UI shows it as unavailable |
-| Target-speaker isolation (other people in the room) | **Not in this build**: experimental, planned |
+| Strict voice isolation (removes other people's voices, VoxLock INT8 Full, CPU) | Implemented: record your voice once; fail-closed (silence, never the raw microphone) |
 | Custom virtual audio driver | Not planned for the MVP (uses VB-CABLE) |
 
 ## Requirements
@@ -77,7 +77,9 @@ Useful options:
 | `VOICESTUDIO_WITH_RNNOISE` | ON | Build RNNoise. If it fails to compile, set OFF: the app then offers DSP-only suppression |
 | `RNNOISE_SOURCE_DIR` | (empty) | Use a local RNNoise tree (offline builds) |
 | `VOICESTUDIO_BUILD_TESTS` | ON | GoogleTest suites |
-| `VOICESTUDIO_BUILD_TOOLS` | ON | `vs_bench`, `vs_latency`, `vs_soak` |
+| `VOICESTUDIO_BUILD_TOOLS` | ON | `vs_bench`, `vs_latency`, `vs_soak` (+ `vs_isolation` with VoxLock) |
+| `VOICESTUDIO_WITH_VOXLOCK` | ON | Strict voice isolation. Configure downloads ONNX Runtime 1.31 (CPU) and the VoxLock INT8 Full models (~85 MB, SHA-256 pinned) once |
+| `ONNXRUNTIME_ROOT` / `VOXLOCK_MODEL_DIR` | (empty) | Offline builds: an extracted `onnxruntime-win-x64-1.31.0` package / a folder with `enroll.onnx` and `chunk_int8_full.onnx` |
 
 Outputs land in `build/<preset>/bin/`.
 
@@ -126,6 +128,8 @@ users install it separately. Uninstall through *Settings > Apps*; user data in
 
 ## Privacy
 
-- Audio is processed in memory only and never written to disk or sent anywhere.
+- Audio is processed in memory only and never sent anywhere. The one exception is strict voice
+  isolation: when you record your voice, a 16 kHz sample is saved locally as
+  `%LOCALAPPDATA%\VoiceStudio\voice\voice_sample.wav` so it survives restarts. "Delete my voice" removes it.
 - No telemetry, no network access at runtime.
 - Logs contain events and device names only. Crash dumps are minimal (stacks and module list, no audio buffers).

@@ -31,10 +31,11 @@ Source layout:
 |---|---|---|
 | `src/core` | parameter registry, SPSC ring, DSP math, MMCSS/QPC helpers | no |
 | `src/dsp` | biquads, high-pass, gate/expander, compressor, limiter, EQ, pitch, DSP suppressor | no |
-| `src/ai` | `INoiseSuppressionProcessor`, RNNoise integration (ONNX / speaker isolation later) | no |
+| `src/ai` | `INoiseSuppressionProcessor`, RNNoise integration, VoxLock streaming port + ONNX Runtime loader (`voxlock/`) | no |
 | `src/audio` | engine, supervisor, processing chain | no |
 | `src/audio/wasapi` | WASAPI streams, client initialisation, COM helpers | no |
 | `src/audio/buffers` | resampler, sample-format conversion, adaptive ring reader | no |
+| `src/audio/isolation` | `VoiceIsolator`: fail-closed strict voice isolation stage, worker/loader threads, enrollment recording | no |
 | `src/audio/monitoring` | lock-free metrics, percentile statistics | no |
 | `src/devices` | endpoint enumeration and notifications | no |
 | `src/hardware` | CPU (CPUID) / GPU (DXGI) detection, backend list | no |
@@ -55,6 +56,9 @@ tools and the tests.
 | Supervisor | normal | yes | WASAPI init, restarts, recovery, health checks every 100 ms |
 | Capture | MMCSS Pro Audio | **no** | packet read, conversion, resampling, framing, processing, ring push |
 | Render (×1–2) | MMCSS Pro Audio | **no** | ring pop, drift-compensated resampling, conversion, device write |
+| Isolation worker | MMCSS Pro Audio | not on audio threads | 48↔16 kHz resampling, VoxLock inference (calls ONNX Runtime), overlap-add |
+| ONNX Runtime pool (1 thread) | MMCSS Pro Audio | — | second intra-op thread of each inference (created through ORT's custom thread hooks) |
+| Isolation loader | normal | yes | loads `onnxruntime.dll` + models, runs `enroll.onnx`, builds and calibrates per-voice sessions |
 | Windows notification | system | must not | device events, forwarded with a queued Qt invocation |
 
 Communication:

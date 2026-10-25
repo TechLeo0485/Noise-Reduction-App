@@ -50,6 +50,8 @@ constexpr std::array<ParamSpec, kParamCount> kSpecs{{
 
     {ParamId::PitchEnabled, "pitchEnabled", "Pitch shift", K::Bool, 0.f, 1.f, 0.f, 1.f, ""},
     {ParamId::PitchSemitones, "pitchSemitones", "Pitch", K::Float, -12.f, 12.f, 0.f, 0.5f, "st"},
+
+    {ParamId::IsolationEnabled, "isolationEnabled", "Strict voice isolation", K::Bool, 0.f, 1.f, 0.f, 1.f, ""},
 }};
 
 constexpr bool specsAreOrdered() {

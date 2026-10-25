@@ -10,6 +10,7 @@ if(NOT WIN32)
 endif()
 
 option(VOICESTUDIO_WITH_RNNOISE "Build with RNNoise neural noise suppression" ON)
+option(VOICESTUDIO_WITH_VOXLOCK "Build Strict Voice Isolation (VoxLock INT8 Full on ONNX Runtime)" ON)
 option(VOICESTUDIO_BUILD_APP "Build the Qt desktop application" ON)
 option(VOICESTUDIO_BUILD_TESTS "Build unit / integration / performance tests" ON)
 option(VOICESTUDIO_BUILD_TOOLS "Build command-line benchmark and latency tools" ON)
@@ -50,6 +51,9 @@ add_library(vs_core STATIC
     src/dsp/PitchShifter.cpp
     src/dsp/DspNoiseSuppressor.cpp
     src/ai/rnnoise/RnnoiseSuppressor.cpp
+    src/ai/voxlock/VoxLockStream.cpp
+    src/ai/voxlock/VoxLockEnrollment.cpp
+    src/audio/isolation/VoiceIsolator.cpp
     src/audio/VoiceProcessingChain.cpp
     src/audio/AudioEngine.cpp
     src/audio/EngineSupervisor.cpp
@@ -75,6 +79,26 @@ if(VOICESTUDIO_WITH_RNNOISE)
     target_link_libraries(vs_core PRIVATE rnnoise)
     target_compile_definitions(vs_core PRIVATE VOICESTUDIO_HAS_RNNOISE=1)
 endif()
+if(VOICESTUDIO_WITH_VOXLOCK)
+    target_sources(vs_core PRIVATE
+        src/ai/voxlock/OnnxModelPatch.cpp
+        src/ai/voxlock/VoxLockRuntime.cpp)
+    target_link_libraries(vs_core PRIVATE onnxruntime_headers)
+    target_compile_definitions(vs_core PRIVATE VOICESTUDIO_HAS_VOXLOCK=1)
+endif()
+
+# Copies onnxruntime.dll and the VoxLock models next to an executable (models/voxlock/), which is
+# where VoiceIsolator looks for them at runtime.
+function(voicestudio_deploy_voxlock target)
+    if(NOT VOICESTUDIO_WITH_VOXLOCK)
+        return()
+    endif()
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VOICESTUDIO_ORT_DLL}" "$<TARGET_FILE_DIR:${target}>"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models/voxlock"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VOICESTUDIO_VOXLOCK_FILES} "$<TARGET_FILE_DIR:${target}>/models/voxlock"
+        VERBATIM)
+endfunction()
 
 # ---- Qt-dependent pieces ----------------------------------------------------------------------
 if(VOICESTUDIO_BUILD_APP OR VOICESTUDIO_BUILD_TESTS)
@@ -123,6 +147,7 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/VsComboBox.qml
             ui/components/VsSlider.qml
             ui/components/VsSwitch.qml
+            ui/components/VoiceIsolationCard.qml
             ui/screens/HomeScreen.qml
             ui/screens/SoundScreen.qml
             ui/screens/SettingsScreen.qml
@@ -134,6 +159,7 @@ if(VOICESTUDIO_BUILD_APP)
 
     target_link_libraries(VoiceStudio PRIVATE
         vs_core vs_settings Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 dbghelp)
+    voicestudio_deploy_voxlock(VoiceStudio)
 
     # Copy the Qt DLLs, plugins and QML modules next to the exe after every build so it runs
     # straight from build/<preset>/bin (the install step deploys separately, see below).
@@ -157,6 +183,10 @@ if(VOICESTUDIO_BUILD_APP)
         NO_UNSUPPORTED_PLATFORM_ERROR)
     install(SCRIPT ${VOICESTUDIO_DEPLOY_SCRIPT})
     install(FILES LICENSE THIRD_PARTY_LICENSES.md README.md DESTINATION . OPTIONAL)
+    if(VOICESTUDIO_WITH_VOXLOCK)
+        install(FILES "${VOICESTUDIO_ORT_DLL}" DESTINATION .)
+        install(FILES ${VOICESTUDIO_VOXLOCK_FILES} DESTINATION models/voxlock)
+    endif()
 endif()
 
 # ---- Tools ----------------------------------------------------------------------------------
@@ -168,6 +198,11 @@ if(VOICESTUDIO_BUILD_TOOLS)
     add_executable(vs_soak tools/vs_soak.cpp)
     target_link_libraries(vs_soak PRIVATE vs_core ole32)
     install(TARGETS vs_bench vs_latency vs_soak RUNTIME DESTINATION tools)
+    if(VOICESTUDIO_WITH_VOXLOCK)
+        add_executable(vs_isolation tools/vs_isolation.cpp)
+        target_link_libraries(vs_isolation PRIVATE vs_core winmm)
+        voicestudio_deploy_voxlock(vs_isolation)
+    endif()
 endif()
 
 # ---- Tests ----------------------------------------------------------------------------------

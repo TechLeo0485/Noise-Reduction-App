@@ -18,8 +18,8 @@ struct Preset {
     ParamValues values; // overrides on top of defaults for preset-scoped parameters
 };
 
-// Parameters a preset controls. Microphone gain, master mute and monitor volume are
-// per-setup values and are deliberately left untouched when switching presets.
+// Parameters a preset controls. Microphone gain, master mute, monitor volume and strict voice
+// isolation are per-setup values and are deliberately left untouched when switching presets.
 [[nodiscard]] bool isPresetScoped(ParamId id) noexcept;
 
 [[nodiscard]] const std::vector<Preset>& builtInPresets();

@@ -45,4 +45,10 @@ public:
 // Sets a debugger-visible thread name (non-real-time helper).
 void setCurrentThreadName(const wchar_t* name) noexcept;
 
+// For sustained compute threads (model inference): opts the current thread out of power throttling
+// (EcoQoS) and, on hybrid CPUs, restricts it to the fastest core class (e.g. the P-cores of a 12th-gen
+// Intel), so it keeps full speed while the application is in the background. Returns the number of
+// logical processors selected (0 if the CPU has a single core class and nothing was restricted).
+int preferPerformanceCores() noexcept;
+
 } // namespace vs

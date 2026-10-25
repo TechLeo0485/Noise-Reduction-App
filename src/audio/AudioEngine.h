@@ -68,6 +68,8 @@ public:
     [[nodiscard]] const EngineMetrics& metrics() const noexcept { return metrics_; }
     [[nodiscard]] const EngineRuntimeInfo& runtimeInfo() const noexcept { return info_; }
     [[nodiscard]] bool isSuppressorAvailable(SuppressorKind kind) const noexcept { return chain_.isAvailable(kind); }
+    // Lives as long as the engine (independent of stream restarts).
+    [[nodiscard]] VoiceIsolator& isolator() noexcept { return chain_.isolator(); }
 
     // ---- Voice check: record a few seconds of the processed output for playback --------------
     // Only on explicit user action. Audio stays in this preallocated buffer (never written to disk).

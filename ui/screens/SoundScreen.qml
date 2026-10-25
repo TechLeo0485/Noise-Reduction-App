@@ -97,6 +97,8 @@ ScreenPage {
                 }
             },
 
+            VoiceIsolationCard {},
+
             Card {
                 title: "Voice style"
                 subtitle: "Ready-made starting points. You can still adjust everything afterwards."

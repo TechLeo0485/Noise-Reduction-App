@@ -9,7 +9,8 @@
 
 namespace vs {
 
-VoiceProcessingChain::VoiceProcessingChain() : rnnoise_(RnnoiseSuppressor::create()) {
+VoiceProcessingChain::VoiceProcessingChain()
+    : rnnoise_(RnnoiseSuppressor::create()), isolator_(std::make_unique<VoiceIsolator>()) {
     const auto rate = static_cast<float>(kSampleRate);
     highPass_.prepare(rate, kFrameSize);
     gate_.prepare(rate, kFrameSize);
@@ -43,6 +44,7 @@ void VoiceProcessingChain::reset() noexcept {
     if (rnnoise_) {
         rnnoise_->reset();
     }
+    isolator_->reset();
     gate_.reset();
     equalizer_.reset();
     compressor_.reset();
@@ -118,6 +120,14 @@ void VoiceProcessingChain::process(float* frame, const EngineParameters& params,
     highPass_.updateParameters(params);
     highPass_.process(frame, n);
 
+    // 2b. Strict voice isolation. While enabled the frame is the isolated voice or silence, never the
+    //     microphone signal (the model runs on the isolator's worker thread; this call never blocks).
+    IsolationFrameInfo isolation;
+    isolator_->process(frame, params.getBool(ParamId::IsolationEnabled), isolation);
+    diag.isolationEnabled = isolation.enabled;
+    diag.isolationDelivering = isolation.delivering;
+    diag.isolationLatencySamples = isolation.enabled ? isolation.latencySamples : 0;
+
     // 3. Noise suppression with a one-frame crossfade whenever the engine changes.
     bool unavailable = false;
     const SuppressorKind target = resolveTarget(params, unavailable);
@@ -173,7 +183,8 @@ void VoiceProcessingChain::process(float* frame, const EngineParameters& params,
 
     diag.outputPeak = peakAbs(frame, n);
     diag.outputRms = rms(frame, n);
-    diag.algorithmicLatencySamples = suppressorLatency(currentSuppressor_) + pitch_.latencySamples();
+    diag.algorithmicLatencySamples =
+        suppressorLatency(currentSuppressor_) + pitch_.latencySamples() + diag.isolationLatencySamples;
 }
 
 } // namespace vs

@@ -102,28 +102,7 @@ ScreenPage {
                 }
             },
 
-            Card {
-                title: "Background voice isolation"
-                subtitle: "Experimental - not available in this build"
-                icon: ""
-                VsSwitch {
-                    label: "Reduce other people's voices"
-                    description: "Requires a speaker-conditioned model and a local voice enrollment"
-                    checked: false
-                    enabled: false
-                }
-                Text {
-                    text: "Noise suppression, voice-activity detection and separating your voice from another person's "
-                          + "are different problems. RNNoise and the gate reduce distant background chatter somewhat, "
-                          + "but cannot reliably remove a nearby person talking at the same time as you. A target-speaker "
-                          + "model with on-device enrollment is planned as an opt-in experimental feature; your voice "
-                          + "sample would stay on this computer and could be deleted at any time."
-                    color: Theme.textSecondary
-                    font.pixelSize: 12
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-            }
+            VoiceIsolationCard { detailed: true }
         ]
 
         rightContent: [

@@ -12,6 +12,9 @@ Physical microphone
         NaN/Inf guard
         input gain (ramped)
         high-pass, 4th-order Butterworth (default 80 Hz)
+        strict voice isolation (optional): frame → SPSC ring → isolation worker thread
+            [48 → 16 kHz, VoxLock INT8 Full chunk.onnx (ONNX Runtime CPU), 16 → 48 kHz]
+            → SPSC ring → frame (isolated voice or silence; see below)
         noise suppression: Off | DSP-only | RNNoise    (one-frame crossfade on change)
         noise gate / downward expander, held open by RNNoise VAD
         EQ → compressor → pitch   (user-configurable order)
@@ -24,6 +27,38 @@ Physical microphone
   → apps record from "CABLE Output"
 ```
 
+## Strict voice isolation
+
+`VoiceIsolator` (src/audio/isolation) keeps only the enrolled voice. The model never runs on the
+capture thread: the capture thread pushes each 10 ms frame into a lock-free ring, wakes the
+isolation worker (MMCSS Pro Audio) and pops the isolated audio produced earlier. Inference is a
+C++ port of the official `voxlock.core.Stream` (src/ai/voxlock/VoxLockStream.cpp): reflect start
+padding, fixed K-hop chunks of `chunk_int8_full.onnx`, the six LSTM states carried from call to
+call, weighted overlap-add with the squared Hann window and the -0.5 output gain.
+
+- **Fail-closed.** While the switch is on, a frame is either isolated audio or silence. Silence is
+  used while the model loads, without an enrolled voice, after an inference error (the stream then
+  restarts), when the worker is late (one frame of silence, then the cushion grows) and after a
+  ring overflow. The only microphone audio after switching on is a 2 ms fade-out in the very
+  frame where the switch flips. Presets never change the switch.
+- **Enrollment.** The UI records 10 s of the microphone after input gain and high-pass (the signal
+  the model sees). The recording is resampled to 16 kHz, checked (level, clipping, speech-like
+  dynamics), its loudest 3 s are run through `enroll.onnx` (`fit_sample`), and the result is bound
+  into a new chunk session. The previous voice keeps running until the new one is ready.
+- **Constant folding.** The chunk graph recomputes the enrollment-only branch (32 per-band
+  key/value projections of the speaker context) on every call. `bindInputsAsConstants()` turns
+  `enroll_mag` and `context` into initializers so ONNX Runtime folds that branch once per voice:
+  per-call time drops by about 40 %, with output identical to the unmodified graph.
+- **Calibration.** On every enrollment the loader measures inference on this CPU and picks the
+  smallest chunk K (8 ms hops) with p50 ≤ 75 % and p95 ≤ 100 % of the chunk's duration.
+- **Latency.** Fixed delay = VoxLock's 24 ms look-ahead + chunking + 2 ms of resampling + one frame
+  of hand-over + a 20 ms safety cushion: about 80 ms on an i7-12700KF. The start-up cushion assumes
+  the worst frame/hop phase; slack above the cushion is trimmed in 5 ms steps during silence
+  (2 s observation windows). A late chunk costs one 10 ms frame of silence and grows the cushion.
+- **Scheduling.** The worker, ONNX Runtime's pool thread and the loader opt out of power
+  throttling and, on hybrid CPUs, run on the performance cores only (`preferPerformanceCores()`),
+  because VoiceStudio usually runs in the background during a call.
+
 ## Real-time rules (enforced by construction)
 
 Inside the capture and render threads:
@@ -35,7 +70,9 @@ Inside the capture and render threads:
 - No I/O or logging: the supervisor logs on the threads' behalf from polled state.
 - Bounded work: each wake-up processes what the device delivered; each frame runs a fixed
   pipeline. The capture wait has a 200 ms timeout, so a stop request is never missed.
-- No model initialisation: suppressors are created before streaming.
+- No model initialisation: suppressors are created before streaming. VoxLock sessions are built
+  on the isolation loader thread and handed to the isolation worker; the capture thread only
+  sees atomics and rings.
 - MMCSS "Pro Audio" registration and FTZ/DAZ are set per thread (RAII).
 
 ## Buffering and the overflow/underflow policy
@@ -71,6 +108,9 @@ each effect. Gain, volume and mute changes are ramped per frame.
 requested engine is unavailable, the chain reports `requestedModeUnavailable`, which the UI
 shows. A processor that emits NaN/Inf is neutralised by the output guard (and counted)
 rather than allowed to reach the device.
+
+Strict voice isolation has no fallback by design: if it cannot run, the output is silent until
+the user switches it off.
 
 ## Device recovery
 

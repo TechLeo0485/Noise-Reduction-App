@@ -163,3 +163,62 @@ Also confirm the in-app counters after a full working day with Discord/Teams ope
 | Material | Mode | PESQ | STOI | Listening notes |
 |---|---|---|---|---|
 | *(not yet measured)* | | | | |
+
+## 6. Strict voice isolation (VoxLock INT8 Full)
+
+Measured 2026-10-24 on an i7-12700KF (8P+4E, 20 threads), 32 GB, GTX 1050 Ti 4 GB, Windows 11,
+ONNX Runtime 1.31.0. Reproduce with `vs_isolation` (see the header of `tools/vs_isolation.cpp`).
+
+**Inference per `chunk_int8_full.onnx` call** (2 intra-op threads):
+
+| Variant | 8 ms chunk (K=1) | 16 ms chunk (K=2) | 24 ms chunk (K=3) |
+|---|---|---|---|
+| Unmodified graph, dynamic shapes (Python ORT) | p50 12.8 ms | p50 15.3 ms | p50 16.4 ms |
+| Enrollment folded + static shapes (what the app runs) | p50 6.6 ms, p99 9.8 ms | **p50 8.7–9.2 ms, p99 10.5–12.5 ms** | p50 11.1 ms |
+| GPU, DirectML, INT8 Full (quantised LSTMs fall back to CPU) | | p50 12.7 ms | |
+| GPU, DirectML, fp32 model | p50 21.1 ms | p50 21.8 ms | |
+
+K=1 cannot keep up (p99 above the 8 ms budget); calibration picks K=2 on this machine. The GPU is
+slower in every configuration, so the app uses the CPU only. CUDA was not tried: `DynamicQuantizeLSTM`
+and `MatMulInteger` of the INT8 Full graph exist only in the CPU provider.
+
+**Real-time runs** (`vs_isolation`, full chain, one frame every 10 ms of wall clock). Final configuration:
+2 intra-op threads without spinning, worker / ONNX Runtime / loader threads on the P-cores with power
+throttling (EcoQoS) disabled, 20 ms safety cushion:
+
+| Condition | Isolation latency | Late chunks | Inference p50 / p99 | CPU |
+|---|---|---|---|---|
+| 3 × 90 s, desktop apps open (Discord, Chrome, Voicemod, ...) | 80 ms steady | 0, 0, 0 | 9.4–10.2 / 12.5–13.2 ms | 0.25 core (1.3 % of the CPU) |
+| All 20 logical CPUs saturated by 20 busy processes, 30 s | 97–100 ms (calibration chose K=4) | 0 | 13.0 / 19.7 ms per 32 ms chunk | 0.4 core |
+
+What did not work, for the record: without P-core selection, the same 90 s runs had 2–16 late chunks
+(Windows moved the inference threads of the background process onto E-cores; inference p99 rose to 17 ms).
+A 10 ms cushion reached 61–65 ms but produced occasional 10 ms gaps. ORT thread spinning cost ~1 core and
+did not remove the gaps.
+
+Capture-thread cost of `VoiceIsolator::process()`: p50 8 µs, max 35 µs per frame.
+
+**Quality** (8 LibriSpeech dev-clean speaker pairs, other voice at 0 dB fully overlapping, enrolled from a
+different utterance; Python offline scoring):
+
+| | Mixture | Isolated (offline 16 kHz) | Isolated (real-time 48 kHz path) |
+|---|---|---|---|
+| SI-SDR | 0.0 dB | 12.0 dB | 12.2 dB |
+| STOI | 0.73 | 0.92 | 0.92 |
+| PESQ (wide-band) | 1.20 | 2.28 | 2.23 |
+| Own voice alone: SI-SDR / PESQ | — | 35.8 dB / 4.44 | 26.1 dB / 4.28 |
+
+The C++ port matches the official `voxlock.core.Stream` (same model, K=2): residual difference 41–102 dB
+below the signal (INT8 rounding with static vs dynamic shapes); all metrics agree to 3 digits.
+
+**Known limitation (model behaviour, also present in the official implementation):** other voices are
+removed reliably while you talk, but not always while you are silent:
+
+- Other person alone for the first 2 s of a stream: suppressed by 36–47 dB in 4 of 8 pairs; in the other
+  4 their voice passed at full level for most of those 2 s (two pairs) or after 0.5–1 s (two pairs).
+- Other person alone for 3 s after you have spoken: suppressed by 27–47 dB in 3 of 6 pairs; in the
+  other 3 their first 0.5–1.5 s passed, after which they were suppressed by 25–50 dB.
+
+A speaker-verification gate cannot catch these onsets within the latency budget (it needs about a second
+of audio to decide), so none is added. Enroll in the same room and with the same microphone as the call,
+and prefer a headset or a directional microphone when others speak nearby.

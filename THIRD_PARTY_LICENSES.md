@@ -5,6 +5,8 @@
 | Qt (Core, Gui, Qml, Quick, QuickControls2) | 6.5+ | LGPL-3.0 (or commercial) | UI | Yes, as dynamically linked DLLs (LGPL requirement: users can replace them) |
 | RNNoise (Xiph.Org Foundation, Jean-Marc Valin) | 0.2 | BSD-3-Clause, including the bundled model weights | Noise suppression | Yes, statically linked |
 | GoogleTest | 1.15.2 | BSD-3-Clause | Tests only | No |
+| ONNX Runtime (Microsoft) | 1.31.0, CPU package | MIT | Strict voice isolation inference | Yes, `onnxruntime.dll` (loaded at runtime) |
+| VoxLock (Arbaz Siddiqui), models `enroll.onnx` + `chunk_int8_full.onnx`, revision a50f4e1d | 1.x | Apache-2.0 (weights and code); model code derived from WeSep (Apache-2.0) | Strict voice isolation | Yes, `models/voxlock/`. `src/ai/voxlock/VoxLockStream.cpp` and `VoxLockEnrollment.cpp` port its streaming code |
 | Microsoft Windows SDK (WASAPI, Core Audio, DXGI, AVRT, DbgHelp) | system | Windows SDK license | Platform APIs | System components |
 | VB-CABLE (VB-Audio Software) | user-installed | Donationware, proprietary | Virtual microphone | **No.** Users install it themselves; it must not be redistributed without VB-Audio's permission |
 
@@ -13,6 +15,9 @@ Before release, copy the full license texts into `licenses/` in the installer:
 - Qt: `LICENSE.LGPL3` and `LICENSE.GPL3` from the Qt installation, plus a written offer or a
   link to the Qt source code used.
 - RNNoise: `COPYING` from the RNNoise source archive.
+- ONNX Runtime: `LICENSE` and `ThirdPartyNotices.txt` from the ONNX Runtime package.
+- VoxLock: `LICENSE` (Apache-2.0) and `NOTICE` from https://huggingface.co/arbazsiddiqui/voxlock
+  ("VoxLock, Copyright 2026 Arbaz Siddiqui"; wesep/ from the REAL-TSE WeSep baseline, Apache-2.0).
 
-No other models or datasets are included. Any future ONNX model must have its license
+No other models or datasets are included. Any further ONNX model must have its license
 reviewed and listed here before it is added (see Phase 3 in `docs/implementation-checklist.md`).

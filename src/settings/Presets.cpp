@@ -8,7 +8,9 @@ constexpr float kDspOnly = static_cast<float>(SuppressionMode::DspOnly);
 } // namespace
 
 bool isPresetScoped(ParamId id) noexcept {
-    return id != ParamId::InputGainDb && id != ParamId::MasterMute && id != ParamId::MonitorGainDb;
+    // Strict isolation is a privacy control, not a sound setting: a preset must never switch it off.
+    return id != ParamId::InputGainDb && id != ParamId::MasterMute && id != ParamId::MonitorGainDb &&
+           id != ParamId::IsolationEnabled;
 }
 
 const std::vector<Preset>& builtInPresets() {

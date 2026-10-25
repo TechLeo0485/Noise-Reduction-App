@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ai/INoiseSuppressionProcessor.h"
+#include "audio/isolation/VoiceIsolator.h"
 #include "core/Parameters.h"
 #include "dsp/Compressor.h"
 #include "dsp/DspNoiseSuppressor.h"
@@ -30,11 +31,15 @@ struct FrameDiagnostics {
     SuppressorKind activeSuppressor = SuppressorKind::Off;
     bool requestedModeUnavailable = false;
     bool repairedNonFinite = false;
+    bool isolationEnabled = false;
+    bool isolationDelivering = false; // false while enabled: the frame was silenced (fail-closed)
+    int isolationLatencySamples = 0;
 };
 
 // The complete per-frame voice processing pipeline (48 kHz mono, 10 ms frames):
 //
-//   input gain -> high-pass -> noise suppressor (Off / DSP / RNNoise) -> noise gate
+//   input gain -> high-pass -> strict voice isolation (optional, VoxLock on its own thread)
+//   -> noise suppressor (Off / DSP / RNNoise) -> noise gate
 //   -> [EQ, compressor, pitch in configurable order] -> voice volume -> mute
 //   -> limiter -> NaN guard + hard clip
 //
@@ -58,6 +63,8 @@ public:
     // Processes exactly kFrameSize samples in place.
     void process(float* frame, const EngineParameters& params, FrameDiagnostics& diag) noexcept;
 
+    [[nodiscard]] VoiceIsolator& isolator() noexcept { return *isolator_; }
+
 private:
     [[nodiscard]] SuppressorKind resolveTarget(const EngineParameters& params, bool& unavailable) const noexcept;
     float runSuppressor(SuppressorKind kind, const float* in, float* out, float strength) noexcept;
@@ -67,6 +74,7 @@ private:
     HighPassFilter highPass_;
     DspNoiseSuppressor dspSuppressor_;
     std::unique_ptr<RnnoiseSuppressor> rnnoise_;
+    std::unique_ptr<VoiceIsolator> isolator_;
     NoiseGate gate_;
     Equalizer equalizer_;
     Compressor compressor_;

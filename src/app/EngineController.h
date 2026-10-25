@@ -80,6 +80,7 @@ class EngineController : public QObject {
     Q_PROPERTY(QVariantMap hardware READ hardware CONSTANT)
     Q_PROPERTY(QVariantMap cableTest READ cableTest NOTIFY cableTestChanged)
     Q_PROPERTY(QVariantMap voiceCheck READ voiceCheck NOTIFY voiceCheckChanged)
+    Q_PROPERTY(QVariantMap isolation READ isolation NOTIFY isolationChanged)
 
     // Simple-mode support
     Q_PROPERTY(bool advancedUi READ advancedUi WRITE setAdvancedUi NOTIFY configChanged)
@@ -150,6 +151,7 @@ public:
     [[nodiscard]] QVariantMap hardware() const { return hardware_; }
     [[nodiscard]] QVariantMap cableTest() const { return cableTest_; }
     [[nodiscard]] QVariantMap voiceCheck() const { return voiceCheck_; }
+    [[nodiscard]] QVariantMap isolation() const { return isolation_; }
     [[nodiscard]] bool advancedUi() const { return settings_.advancedUi; }
     void setAdvancedUi(bool enabled);
     [[nodiscard]] QVariantMap setup() const { return setup_; }
@@ -177,6 +179,11 @@ public:
     Q_INVOKABLE void fixOutput();
     Q_INVOKABLE void startVoiceCheck(double seconds = 5.0);
     Q_INVOKABLE void stopVoiceCheck();
+    // Strict voice isolation: records ~10 s of the microphone, then enrolls it as "your voice" (saved
+    // locally under %LOCALAPPDATA%/VoiceStudio/voice). Re-recording replaces it; delete removes the file.
+    Q_INVOKABLE void startVoiceEnrollment();
+    Q_INVOKABLE void cancelVoiceEnrollment();
+    Q_INVOKABLE void deleteVoiceEnrollment();
     Q_INVOKABLE void resetStatistics();
     Q_INVOKABLE void openLogFolder();
     Q_INVOKABLE QString diagnosticsReport() const;
@@ -192,6 +199,7 @@ signals:
     void statsChanged();
     void cableTestChanged();
     void voiceCheckChanged();
+    void isolationChanged();
     void setupChanged();
 
 private:
@@ -206,6 +214,8 @@ private:
     void updateRoutingWarning();
     void autoSelectCableOutput();
     void pollVoiceCheck();
+    void pollIsolation();
+    void refreshIsolation();
     void refreshSetup();
     [[nodiscard]] const AudioDeviceInfo* findDevice(const std::vector<AudioDeviceInfo>& list, const std::wstring& id) const;
     [[nodiscard]] const AudioDeviceInfo* suggestedMicrophone() const;
@@ -238,6 +248,13 @@ private:
     QVariantMap hardware_;
     QVariantMap cableTest_;
     QVariantMap voiceCheck_;
+    QVariantMap isolation_;
+    QString enrollPhase_ = QStringLiteral("idle"); // idle | recording | processing
+    QString enrollMessage_;
+    std::uint64_t enrollSubmitRevision_ = 0;
+    std::uint64_t isolationRevisionSeen_ = ~0ull;
+    std::vector<float> isolationInferenceUs_; // recent chunk.onnx times (ring)
+    std::size_t isolationInferenceNext_ = 0;
     QVariantMap setup_;
     bool micHeard_ = false; // a voice-level signal was seen on the current microphone
     std::thread playbackThread_;

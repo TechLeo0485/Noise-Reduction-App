@@ -57,6 +57,87 @@ if(VOICESTUDIO_WITH_RNNOISE)
     message(STATUS "RNNoise: ${_rnnoise_dir}")
 endif()
 
+# ---- Strict Voice Isolation: ONNX Runtime + VoxLock INT8 Full ---------------------------------
+#
+#   ONNX Runtime 1.31  - MIT. Official prebuilt CPU package; onnxruntime.dll ships next to the exe.
+#   VoxLock            - Apache-2.0 (arbazsiddiqui/voxlock). enroll.onnx + chunk_int8_full.onnx,
+#                        pinned to a Hugging Face revision and verified by SHA-256.
+#
+# Both are fetched at configure time only. The application never downloads anything at runtime.
+# Offline builds: set ONNXRUNTIME_ROOT (extracted package) and VOXLOCK_MODEL_DIR (the two .onnx files).
+if(VOICESTUDIO_WITH_VOXLOCK)
+    set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-win-x64-1.31.0.zip"
+        CACHE STRING "ONNX Runtime CPU package for Windows x64")
+    set(ONNXRUNTIME_URL_HASH "SHA256=3958d8a44984160692c1b4ffd0de3cb48f8c39f9d34bb31e433db06e30b82195"
+        CACHE STRING "Hash of the ONNX Runtime package")
+    set(ONNXRUNTIME_ROOT "" CACHE PATH "Use an already-extracted ONNX Runtime package instead of downloading")
+
+    if(ONNXRUNTIME_ROOT)
+        set(_ort_dir "${ONNXRUNTIME_ROOT}")
+    else()
+        FetchContent_Declare(onnxruntime_pkg
+            URL ${ONNXRUNTIME_URL} URL_HASH ${ONNXRUNTIME_URL_HASH}
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            SOURCE_SUBDIR voicestudio-no-cmake)
+        FetchContent_MakeAvailable(onnxruntime_pkg)
+        set(_ort_dir "${onnxruntime_pkg_SOURCE_DIR}")
+    endif()
+    if(NOT EXISTS "${_ort_dir}/include/onnxruntime_cxx_api.h" OR NOT EXISTS "${_ort_dir}/lib/onnxruntime.dll")
+        message(FATAL_ERROR "ONNX Runtime not found in ${_ort_dir}. Set ONNXRUNTIME_ROOT or configure with "
+                            "-DVOICESTUDIO_WITH_VOXLOCK=OFF.")
+    endif()
+    # Headers only: the runtime is loaded explicitly with LoadLibrary (see VoxLockRuntime.cpp), so a missing
+    # or broken DLL disables isolation instead of preventing the application from starting.
+    add_library(onnxruntime_headers INTERFACE)
+    target_include_directories(onnxruntime_headers SYSTEM INTERFACE "${_ort_dir}/include")
+    set(VOICESTUDIO_ORT_DLL "${_ort_dir}/lib/onnxruntime.dll")
+    message(STATUS "ONNX Runtime: ${_ort_dir}")
+
+    set(VOXLOCK_REVISION "a50f4e1d109301d4b6f61dec57ebb1a61e7d8f03" CACHE STRING "Hugging Face revision of arbazsiddiqui/voxlock")
+    set(VOXLOCK_MODEL_DIR "" CACHE PATH "Directory holding enroll.onnx and chunk_int8_full.onnx (skips the download)")
+    set(_voxlock_files
+        "enroll.onnx|86645cba23f207def0b31a6e74a615d3b7a813b4fdf957c53b3af2905ba2ffd3"
+        "chunk_int8_full.onnx|7b57c1bfd5acd5b33768a9dff09d9af487d45374b3ba0b991e541ff121eaa337")
+    set(VOICESTUDIO_VOXLOCK_DIR "${CMAKE_BINARY_DIR}/_deps/voxlock-models")
+    file(MAKE_DIRECTORY "${VOICESTUDIO_VOXLOCK_DIR}")
+    set(VOICESTUDIO_VOXLOCK_FILES "")
+    foreach(_entry IN LISTS _voxlock_files)
+        string(REPLACE "|" ";" _parts "${_entry}")
+        list(GET _parts 0 _name)
+        list(GET _parts 1 _sha)
+        set(_dest "${VOICESTUDIO_VOXLOCK_DIR}/${_name}")
+        set(_have FALSE)
+        if(EXISTS "${_dest}")
+            file(SHA256 "${_dest}" _actual)
+            if(_actual STREQUAL _sha)
+                set(_have TRUE)
+            endif()
+        endif()
+        if(NOT _have AND VOXLOCK_MODEL_DIR)
+            file(COPY_FILE "${VOXLOCK_MODEL_DIR}/${_name}" "${_dest}")
+            file(SHA256 "${_dest}" _actual)
+            if(NOT _actual STREQUAL _sha)
+                file(REMOVE "${_dest}")
+                message(FATAL_ERROR "${VOXLOCK_MODEL_DIR}/${_name} does not match the pinned VoxLock model (SHA-256 ${_sha})")
+            endif()
+            set(_have TRUE)
+        endif()
+        if(NOT _have)
+            message(STATUS "Downloading VoxLock ${_name} ...")
+            file(DOWNLOAD "https://huggingface.co/arbazsiddiqui/voxlock/resolve/${VOXLOCK_REVISION}/onnx/${_name}" "${_dest}"
+                 EXPECTED_HASH SHA256=${_sha} INACTIVITY_TIMEOUT 60 STATUS _status)
+            list(GET _status 0 _code)
+            if(NOT _code EQUAL 0)
+                file(REMOVE "${_dest}")
+                message(FATAL_ERROR "Downloading VoxLock ${_name} failed: ${_status}. Set VOXLOCK_MODEL_DIR to "
+                                    "a directory with the files, or configure with -DVOICESTUDIO_WITH_VOXLOCK=OFF.")
+            endif()
+        endif()
+        list(APPEND VOICESTUDIO_VOXLOCK_FILES "${_dest}")
+    endforeach()
+    message(STATUS "VoxLock models: ${VOICESTUDIO_VOXLOCK_DIR}")
+endif()
+
 if(VOICESTUDIO_BUILD_TESTS)
     find_package(GTest CONFIG QUIET)
     if(NOT GTest_FOUND)

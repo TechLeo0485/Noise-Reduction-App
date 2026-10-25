@@ -7,6 +7,7 @@
 #include "settings/Presets.h"
 
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -92,6 +93,12 @@ EngineController::EngineController(QObject* parent) : QObject(parent), settingsP
     voiceCheck_["state"] = QStringLiteral("idle");
     voiceCheck_["progress"] = 0.0;
     voiceCheck_["message"] = QString();
+
+    // Strict voice isolation: runtime and models ship next to the exe; the voice sample stays in local app data.
+    const std::filesystem::path appDir = QCoreApplication::applicationDirPath().toStdWString();
+    supervisor_->engine().isolator().initialize(appDir, appDir / L"models" / L"voxlock",
+                                                appDataDirectory() / L"voice" / L"voice_sample.wav");
+    refreshIsolation();
 
     supervisor_->applyConfig(settings_.engine);
     supervisor_->launch();
@@ -615,6 +622,10 @@ void EngineController::setParam(const QString& key, const QVariant& value) {
         return;
     }
     params_.set(spec->id, requested);
+    if (spec->id == ParamId::IsolationEnabled) {
+        logInfo(std::string("Strict voice isolation ") + (params_.getBool(spec->id) ? "enabled" : "disabled"));
+        refreshIsolation();
+    }
     if (isPresetScoped(spec->id) && !presetModified_) {
         presetModified_ = true;
         emit presetsChanged();
@@ -755,6 +766,7 @@ void EngineController::updateMeters() {
         suppressorKindName(static_cast<SuppressorKind>(m.activeSuppressor.load(std::memory_order_relaxed))));
     emit metersChanged();
     pollVoiceCheck();
+    pollIsolation();
 
     // "We can hear you": a speech-level peak on the current microphone (about -45 dBFS or louder).
     if (!micHeard_ && running && inputLevelDb_ > -45.0) {
@@ -899,16 +911,152 @@ void EngineController::updateStats() {
                                       : -1.0;
     s["processingAddedMs"] = round2(framingMs + algorithmicMs + processingMs + resamplerMs + jitterMs);
 
+    // Strict voice isolation: worker-thread inference times and fail-closed counters.
+    VoiceIsolator::Metrics& iso = supervisor_->engine().isolator().metrics();
+    if (isolationInferenceUs_.empty()) {
+        isolationInferenceUs_.assign(2048, -1.0f); // ~30 s of history at 16 ms chunks
+    }
+    float inferenceUs = 0.0f;
+    while (iso.inferenceUs.pop(&inferenceUs, 1) == 1) {
+        isolationInferenceUs_[isolationInferenceNext_] = inferenceUs;
+        isolationInferenceNext_ = (isolationInferenceNext_ + 1) % isolationInferenceUs_.size();
+    }
+    std::vector<float> recent;
+    for (float v : isolationInferenceUs_) {
+        if (v >= 0.0f) {
+            recent.push_back(v);
+        }
+    }
+    std::sort(recent.begin(), recent.end());
+    auto percentileMs = [&recent](double q) {
+        if (recent.empty()) {
+            return -1.0;
+        }
+        return recent[std::min(recent.size() - 1, static_cast<std::size_t>(q * static_cast<double>(recent.size())))] / 1000.0;
+    };
+    const bool isolationOn = params_.getBool(ParamId::IsolationEnabled);
+    s["isolationEnabled"] = isolationOn;
+    s["isolationDelivering"] = iso.delivering.load();
+    s["isolationLatencyMs"] = isolationOn ? round1(iso.latencyMs.load()) : 0.0;
+    s["isolationInferenceP50Ms"] = round2(percentileMs(0.50));
+    s["isolationInferenceP99Ms"] = round2(percentileMs(0.99));
+    s["isolationInferenceMaxMs"] = round2(recent.empty() ? -1.0 : recent.back() / 1000.0);
+    s["isolationUnderruns"] = static_cast<qulonglong>(iso.underruns.load());
+    s["isolationOverruns"] = static_cast<qulonglong>(iso.overruns.load());
+    s["isolationModelFailures"] = static_cast<qulonglong>(iso.modelFailures.load());
+    s["isolationSilencedFrames"] = static_cast<qulonglong>(iso.silencedFrames.load());
+    s["isolationIsolatedFrames"] = static_cast<qulonglong>(iso.isolatedFrames.load());
+
     s["processCpuPercent"] = proc.cpuPercent >= 0.0 ? round1(proc.cpuPercent) : -1.0;
     s["workingSetMb"] = round1(proc.workingSetMb);
     s["privateMb"] = round1(proc.privateBytesMb);
     s["restartCount"] = static_cast<qulonglong>(status_.restartCount);
     stats_ = s;
     emit statsChanged();
+    refreshIsolation(); // delivering / silencing flags
 }
 
 void EngineController::resetStatistics() {
     statsCollector_.clear();
+}
+
+// ---- Strict voice isolation ---------------------------------------------------------------------
+
+namespace {
+constexpr double kEnrollSeconds = 10.0;
+}
+
+void EngineController::startVoiceEnrollment() {
+    if (enrollPhase_ != QLatin1String("idle")) {
+        return;
+    }
+    VoiceIsolator& isolator = supervisor_->engine().isolator();
+    const IsolationState state = isolator.state();
+    if (state != IsolationState::NeedsEnrollment && state != IsolationState::Ready) {
+        enrollMessage_ = QStringLiteral("Voice isolation is not ready yet.");
+    } else if (!engineRunning()) {
+        enrollMessage_ = QStringLiteral("Start the audio engine first.");
+    } else if (isolator.startRecording(kEnrollSeconds)) {
+        enrollPhase_ = QStringLiteral("recording");
+        enrollMessage_ = QStringLiteral("Recording - read the text aloud in your normal voice...");
+        logInfo("Voice enrollment recording started");
+    }
+    refreshIsolation();
+}
+
+void EngineController::cancelVoiceEnrollment() {
+    supervisor_->engine().isolator().cancelRecording();
+    if (enrollPhase_ == QLatin1String("recording")) {
+        enrollPhase_ = QStringLiteral("idle");
+        enrollMessage_ = QStringLiteral("Recording cancelled. Your previous voice sample (if any) is unchanged.");
+    }
+    refreshIsolation();
+}
+
+void EngineController::deleteVoiceEnrollment() {
+    cancelVoiceEnrollment();
+    enrollMessage_.clear();
+    supervisor_->engine().isolator().deleteEnrollment();
+    refreshIsolation();
+}
+
+void EngineController::pollIsolation() {
+    VoiceIsolator& isolator = supervisor_->engine().isolator();
+    bool changed = false;
+    if (enrollPhase_ == QLatin1String("recording")) {
+        if (!engineRunning()) {
+            isolator.cancelRecording();
+            enrollPhase_ = QStringLiteral("idle");
+            enrollMessage_ = QStringLiteral("The audio engine stopped during recording. Please try again.");
+        } else if (isolator.recordingState() == VoiceIsolator::RecordingState::Ready) {
+            enrollSubmitRevision_ = isolator.statusRevision();
+            isolator.enroll(isolator.takeRecording16k());
+            enrollPhase_ = QStringLiteral("processing");
+            enrollMessage_.clear();
+        }
+        changed = true; // progress and level meter
+    } else if (enrollPhase_ == QLatin1String("processing")) {
+        if (isolator.statusRevision() != enrollSubmitRevision_ && !isolator.status().busy) {
+            enrollPhase_ = QStringLiteral("idle");
+            changed = true;
+        }
+    }
+    if (changed || isolator.statusRevision() != isolationRevisionSeen_) {
+        refreshIsolation();
+    }
+}
+
+void EngineController::refreshIsolation() {
+    VoiceIsolator& isolator = supervisor_->engine().isolator();
+    isolationRevisionSeen_ = isolator.statusRevision();
+    const IsolationStatus st = isolator.status();
+    const VoiceIsolator::Metrics& m = isolator.metrics();
+    const bool enabled = params_.getBool(ParamId::IsolationEnabled);
+    const bool delivering = m.delivering.load(std::memory_order_relaxed);
+
+    QVariantMap iso;
+    iso["state"] = QString::fromLatin1(isolationStateName(st.state));
+    iso["available"] = st.state != IsolationState::NotBuilt && st.state != IsolationState::Error;
+    iso["message"] = enrollMessage_.isEmpty() ? qs(st.message) : enrollMessage_;
+    iso["busy"] = st.busy || enrollPhase_ == QLatin1String("processing");
+    iso["enrolled"] = st.enrolled;
+    iso["ready"] = st.state == IsolationState::Ready;
+    iso["phase"] = enrollPhase_;
+    iso["recordSeconds"] = kEnrollSeconds;
+    iso["recordProgress"] = static_cast<double>(isolator.recordingProgress());
+    iso["recordLevelDb"] = round1(linearToDb(isolator.recordingPeak()));
+    iso["enabled"] = enabled;
+    iso["delivering"] = delivering;
+    // Enabled but not delivering: the microphone is being silenced (no voice yet, loading, error, ...).
+    iso["silencing"] = enabled && engineRunning() && !delivering;
+    iso["backend"] = qs(st.backend);
+    iso["framesPerRun"] = st.framesPerRun;
+    iso["chunkMs"] = st.framesPerRun * 8;
+    iso["threads"] = st.threads;
+    iso["calibrationP50Ms"] = round2(st.calibrationP50Ms);
+    iso["calibrationP95Ms"] = round2(st.calibrationP95Ms);
+    isolation_ = iso;
+    emit isolationChanged();
 }
 
 // ---- Diagnostics ------------------------------------------------------------------------------
