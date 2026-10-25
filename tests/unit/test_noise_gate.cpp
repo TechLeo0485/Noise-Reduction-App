@@ -41,12 +41,22 @@ TEST(NoiseGate, PassesSignalAboveThreshold) {
     EXPECT_NEAR(test::rmsOf(x, 24000), before, before * 0.001);
 }
 
-TEST(NoiseGate, VoiceActivityHoldsGateOpen) {
+TEST(NoiseGate, VoiceActivityHoldsGateOpenForSoftNearbySpeech) {
     NoiseGate gate = makeGate(true);
     gate.setVoiceProbability(0.9f);
-    std::vector<float> x = test::sine(300.0, 48000.0, 48000, 0.000316f);
+    // -58 dBFS: below the -50 dB threshold but within the 12 dB speech margin.
+    std::vector<float> x = test::sine(300.0, 48000.0, 48000, 0.00126f);
     run(gate, x);
     EXPECT_NEAR(gate.currentGainDb(), 0.0f, 0.01f);
+}
+
+TEST(NoiseGate, DistantSpeechDoesNotHoldGateOpen) {
+    NoiseGate gate = makeGate(true);
+    gate.setVoiceProbability(0.9f); // the detector hears speech (someone across the room)...
+    // ...but at -75 dBFS it is far below the threshold, so the gate still closes.
+    std::vector<float> x = test::sine(300.0, 48000.0, 48000, 0.000178f);
+    run(gate, x);
+    EXPECT_NEAR(gate.currentGainDb(), -30.0f, 0.5f);
 }
 
 TEST(NoiseGate, OpensQuicklyWhenSpeechStarts) {

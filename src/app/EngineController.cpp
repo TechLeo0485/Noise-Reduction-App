@@ -164,11 +164,43 @@ void EngineController::refreshDevices() {
     }
     inputDeviceInfos_ = deviceManager_->enumerate(DeviceFlow::Capture);
     outputDeviceInfos_ = deviceManager_->enumerate(DeviceFlow::Render);
+
+    // VB-CABLE installs a second, 16-channel input ("CABLE In 16ch") that feeds the same
+    // "CABLE Output". It is redundant for voice and confusing, so hide it when the normal
+    // "CABLE Input" exists, and move any saved selection over to "CABLE Input".
+    const auto cableInput = std::find_if(outputDeviceInfos_.begin(), outputDeviceInfos_.end(), [](const AudioDeviceInfo& d) {
+        return d.isVirtualCable && containsCi(d.name, L"cable input");
+    });
+    bool selectionMoved = false;
+    if (cableInput != outputDeviceInfos_.end()) {
+        const std::wstring cableInputId = cableInput->id;
+        std::vector<std::wstring> hidden;
+        for (const AudioDeviceInfo& d : outputDeviceInfos_) {
+            if (containsCi(d.name, L"cable in 16")) {
+                hidden.push_back(d.id);
+            }
+        }
+        for (const std::wstring& id : hidden) {
+            for (std::wstring* selected : {&settings_.engine.outputDeviceId, &settings_.engine.monitorDeviceId}) {
+                if (*selected == id) {
+                    *selected = cableInputId;
+                    selectionMoved = true;
+                }
+            }
+        }
+        std::erase_if(outputDeviceInfos_, [&](const AudioDeviceInfo& d) {
+            return std::find(hidden.begin(), hidden.end(), d.id) != hidden.end();
+        });
+    }
     inputDevices_ = toVariantList(inputDeviceInfos_);
     outputDevices_ = toVariantList(outputDeviceInfos_);
     cableDetected_ = std::any_of(outputDeviceInfos_.begin(), outputDeviceInfos_.end(),
                                  [](const AudioDeviceInfo& d) { return d.isVirtualCable; });
     emit devicesChanged();
+    if (selectionMoved && supervisor_) {
+        logInfo("Switched from the 16-channel VB-CABLE input to \"CABLE Input\" (same cable)");
+        pushConfig();
+    }
     refreshSetup();
 }
 

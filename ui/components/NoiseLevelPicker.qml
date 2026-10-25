@@ -64,6 +64,6 @@ ColumnLayout {
         font.pixelSize: 12
         color: Theme.textSecondary
         text: root.current >= 0 ? root.levels[root.current].hint
-                                : "Custom settings (fine-tuned in Advanced controls). Pick a level to reset."
+                                : "Custom settings (fine-tuned or set by a voice style). Pick a level to go back to a standard setting."
     }
 }

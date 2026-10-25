@@ -8,8 +8,8 @@ namespace vs {
 //
 // Below the threshold the gain falls by (ratio - 1) dB per dB, limited to `range` dB, so the
 // gate closes gradually rather than chopping words. A voice-activity probability (from
-// RNNoise) can hold the gate open so quiet speech is never muted: "do not mute the primary
-// speaker" takes priority over silence between words.
+// RNNoise) holds the gate open for soft speech within kVadMarginDb of the threshold, so the
+// primary speaker's quiet words are not muted, while distant (much quieter) voices still are.
 class NoiseGate final : public IAudioProcessor {
 public:
     [[nodiscard]] const char* name() const noexcept override { return "Noise gate"; }
@@ -29,6 +29,9 @@ public:
 
 private:
     static constexpr std::size_t kSubBlock = 16;
+    // Detected speech up to this far below the threshold still holds the gate open (soft words);
+    // quieter speech is treated as distant background talk.
+    static constexpr float kVadMarginDb = 12.0f;
 
     float sampleRate_ = 48000.0f;
     bool enabled_ = true;

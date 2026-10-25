@@ -52,11 +52,16 @@ void NoiseGate::process(float* samples, std::size_t count) noexcept {
         envelope_ = std::max(blockPeak, envelope_ * detectorRelease_);
         const float levelDb = linearToDb(envelope_);
 
+        // Speech detection only protects speech that is reasonably close to the threshold. The
+        // user's own voice at the microphone is loud; other people across the room are also
+        // "speech" to the detector but much quieter, and must not hold the gate open.
+        const bool nearFieldVoice = voiceDetected && levelDb >= thresholdDb_ - kVadMarginDb;
+
         float targetDb = 0.0f;
         if (!enabled_) {
             targetDb = 0.0f;
             holdRemaining_ = 0.0f;
-        } else if (levelDb >= thresholdDb_ || voiceDetected) {
+        } else if (levelDb >= thresholdDb_ || nearFieldVoice) {
             targetDb = 0.0f;
             holdRemaining_ = holdSamples_;
         } else if (holdRemaining_ > 0.0f) {
