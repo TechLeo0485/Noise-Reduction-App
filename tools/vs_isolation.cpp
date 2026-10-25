@@ -11,6 +11,8 @@
 //       for bit-level comparison with the official Python implementation.
 //
 //   --isolator-only   real-time run of the isolator alone (no suppression or effects)
+//   --set key=value   set a chain parameter for the real-time run (keys as in settings.json, e.g.
+//                     --set gateUseVad=0 --set gateThresholdDb=-36); repeatable
 //   --spin 0|1        ONNX Runtime intra-op thread spinning (offline mode; the app uses 0)
 //
 // Input WAVs may have any sample rate; the voice sample needs at least 3 s of speech.
@@ -31,6 +33,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace vs;
@@ -159,11 +162,19 @@ int runOffline(const std::vector<float>& voice16k, const std::vector<float>& inp
 }
 
 int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& input48k, const std::string& outPath,
-                bool isolatorOnly) {
+                bool isolatorOnly, const std::vector<std::pair<std::string, float>>& overrides) {
     const std::filesystem::path dir = exeDirectory();
     VoiceProcessingChain chain;
     EngineParameters params;
     params.set(ParamId::IsolationEnabled, 1.0f);
+    for (const auto& [key, value] : overrides) {
+        if (const ParamSpec* spec = findParam(key)) {
+            params.set(spec->id, value);
+        } else {
+            std::fprintf(stderr, "unknown parameter %s\n", key.c_str());
+            return 2;
+        }
+    }
     VoiceIsolator& isolator = chain.isolator();
 
     const std::int64_t t0 = HighResClock::now();
@@ -273,6 +284,7 @@ int main(int argc, char** argv) {
     bool offline = false;
     bool isolatorOnly = false;
     bool spin = false;
+    std::vector<std::pair<std::string, float>> overrides;
     int k = 2;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -284,6 +296,11 @@ int main(int argc, char** argv) {
         else if (a == "--isolator-only") isolatorOnly = true;
         else if (a == "--k") k = std::max(1, std::atoi(next().c_str()));
         else if (a == "--spin") spin = next() != "0";
+        else if (a == "--set") {
+            const std::string kv = next();
+            const auto eq = kv.find('=');
+            if (eq != std::string::npos) overrides.emplace_back(kv.substr(0, eq), static_cast<float>(std::atof(kv.c_str() + eq + 1)));
+        }
     }
     if (enrollPath.empty() || inPath.empty() || outPath.empty()) {
         std::fprintf(stderr, "usage: vs_isolation [--offline [--k K]] [--isolator-only] --enroll me.wav --in mix.wav --out out.wav\n");
@@ -295,5 +312,5 @@ int main(int argc, char** argv) {
         !load(inPath, offline ? voxlock::kSampleRate : VoiceProcessingChain::kSampleRate, input)) {
         return 1;
     }
-    return offline ? runOffline(voice16k, input, outPath, k, spin) : runRealtime(voice16k, input, outPath, isolatorOnly);
+    return offline ? runOffline(voice16k, input, outPath, k, spin) : runRealtime(voice16k, input, outPath, isolatorOnly, overrides);
 }
