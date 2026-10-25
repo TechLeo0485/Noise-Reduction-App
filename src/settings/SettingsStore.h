@@ -26,6 +26,7 @@ struct AppSettings {
     LogLevel logLevel = LogLevel::Info;
     bool engineEnabled = true;
     bool advancedUi = false; // simple UI by default; technical screens are opt-in
+    bool closeToTray = true; // closing the window keeps VoiceStudio running in the notification area
 
     AppSettings();
     void captureParams(const EngineParameters& source);

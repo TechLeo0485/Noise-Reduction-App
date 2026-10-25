@@ -84,6 +84,11 @@ class EngineController : public QObject {
 
     // Simple-mode support
     Q_PROPERTY(bool advancedUi READ advancedUi WRITE setAdvancedUi NOTIFY configChanged)
+
+    // Background running
+    Q_PROPERTY(bool trayAvailable READ trayAvailable NOTIFY configChanged)
+    Q_PROPERTY(bool closeToTray READ closeToTray WRITE setCloseToTray NOTIFY configChanged)
+    Q_PROPERTY(bool startWithWindows READ startWithWindows WRITE setStartWithWindows NOTIFY configChanged)
     Q_PROPERTY(QVariantMap setup READ setup NOTIFY setupChanged)
     Q_PROPERTY(int noiseLevel READ noiseLevel NOTIFY paramsChanged)
 
@@ -154,6 +159,13 @@ public:
     [[nodiscard]] QVariantMap isolation() const { return isolation_; }
     [[nodiscard]] bool advancedUi() const { return settings_.advancedUi; }
     void setAdvancedUi(bool enabled);
+    [[nodiscard]] bool trayAvailable() const { return trayAvailable_; }
+    void setTrayAvailable(bool available);
+    [[nodiscard]] bool closeToTray() const { return settings_.closeToTray; }
+    void setCloseToTray(bool enabled);
+    // "Start with Windows": the per-user Run key, started with --minimized (straight to the tray).
+    [[nodiscard]] bool startWithWindows() const;
+    void setStartWithWindows(bool enabled);
     [[nodiscard]] QVariantMap setup() const { return setup_; }
     // 0 = Off, 1 = Light, 2 = Balanced, 3 = Strong, -1 = custom (fine-tuned in advanced controls)
     [[nodiscard]] int noiseLevel() const;
@@ -185,6 +197,8 @@ public:
     Q_INVOKABLE void cancelVoiceEnrollment();
     Q_INVOKABLE void deleteVoiceEnrollment();
     Q_INVOKABLE void resetStatistics();
+    // Called by the window when it hides itself instead of closing (shows a one-time tray notice).
+    Q_INVOKABLE void notifyHiddenToTray() { emit hiddenToTray(); }
     Q_INVOKABLE void openLogFolder();
     Q_INVOKABLE QString diagnosticsReport() const;
     Q_INVOKABLE void copyToClipboard(const QString& text);
@@ -200,6 +214,7 @@ signals:
     void cableTestChanged();
     void voiceCheckChanged();
     void isolationChanged();
+    void hiddenToTray();
     void setupChanged();
 
 private:
@@ -249,6 +264,7 @@ private:
     QVariantMap cableTest_;
     QVariantMap voiceCheck_;
     QVariantMap isolation_;
+    bool trayAvailable_ = false;
     QString enrollPhase_ = QStringLiteral("idle"); // idle | recording | processing
     QString enrollMessage_;
     std::uint64_t enrollSubmitRevision_ = 0;

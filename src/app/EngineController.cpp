@@ -8,6 +8,8 @@
 
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QDir>
+#include <QSettings>
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -59,6 +61,13 @@ bool containsCi(const std::wstring& haystack, const wchar_t* needle) {
     return h.find(n) != std::wstring::npos;
 }
 
+const QString kRunKey = QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+const QString kRunValue = QStringLiteral("VoiceStudio");
+
+QString autostartCommand() {
+    return QStringLiteral("\"%1\" --minimized").arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
+}
+
 } // namespace
 
 EngineController::EngineController(QObject* parent) : QObject(parent), settingsPath_(SettingsStore::defaultPath()) {
@@ -93,6 +102,20 @@ EngineController::EngineController(QObject* parent) : QObject(parent), settingsP
     voiceCheck_["state"] = QStringLiteral("idle");
     voiceCheck_["progress"] = 0.0;
     voiceCheck_["message"] = QString();
+
+    // Start with Windows: if the registered exe no longer exists (moved or reinstalled elsewhere), point the
+    // entry at this one. A valid entry is left alone so a second copy (e.g. a dev build) cannot take it over.
+    {
+        QSettings run(kRunKey, QSettings::NativeFormat);
+        const QString registered = run.value(kRunValue).toString();
+        if (!registered.isEmpty()) {
+            const QString exe = registered.section(QLatin1Char('"'), 1, 1);
+            if (!exe.isEmpty() && !QFileInfo::exists(exe)) {
+                run.setValue(kRunValue, autostartCommand());
+                logInfo("Start with Windows now points to " + QCoreApplication::applicationFilePath().toStdString());
+            }
+        }
+    }
 
     // Strict voice isolation: runtime and models ship next to the exe; the voice sample stays in local app data.
     const std::filesystem::path appDir = QCoreApplication::applicationDirPath().toStdWString();
@@ -357,6 +380,38 @@ void EngineController::setAdvancedUi(bool enabled) {
         emit configChanged();
         scheduleSave();
     }
+}
+
+void EngineController::setTrayAvailable(bool available) {
+    if (trayAvailable_ != available) {
+        trayAvailable_ = available;
+        emit configChanged();
+    }
+}
+
+void EngineController::setCloseToTray(bool enabled) {
+    if (settings_.closeToTray != enabled) {
+        settings_.closeToTray = enabled;
+        emit configChanged();
+        scheduleSave();
+    }
+}
+
+bool EngineController::startWithWindows() const {
+    QSettings run(kRunKey, QSettings::NativeFormat);
+    return run.contains(kRunValue);
+}
+
+void EngineController::setStartWithWindows(bool enabled) {
+    QSettings run(kRunKey, QSettings::NativeFormat);
+    if (enabled) {
+        run.setValue(kRunValue, autostartCommand());
+    } else {
+        run.remove(kRunValue);
+    }
+    run.sync();
+    logInfo(std::string("Start with Windows ") + (enabled ? "enabled" : "disabled"));
+    emit configChanged();
 }
 
 void EngineController::autoSelectCableOutput() {

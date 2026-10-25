@@ -99,6 +99,7 @@ QByteArray SettingsStore::toJson(const AppSettings& s) {
     root["performanceMode"] = QString::fromStdString(s.performanceMode);
     root["logLevel"] = static_cast<int>(s.logLevel);
     root["advancedUi"] = s.advancedUi;
+    root["closeToTray"] = s.closeToTray;
 
     QJsonObject custom;
     for (const auto& [name, values] : s.customPresets) {
@@ -175,6 +176,7 @@ bool SettingsStore::fromJson(const QByteArray& json, AppSettings& out, QString* 
     s.performanceMode = root.value("performanceMode").toString(QString::fromStdString(s.performanceMode)).toStdString();
     s.logLevel = static_cast<LogLevel>(std::clamp(root.value("logLevel").toInt(1), 0, 4));
     s.advancedUi = root.value("advancedUi").toBool(false);
+    s.closeToTray = root.value("closeToTray").toBool(true);
 
     const QJsonObject custom = root.value("customPresets").toObject();
     for (auto it = custom.begin(); it != custom.end(); ++it) {

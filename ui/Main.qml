@@ -10,7 +10,7 @@ ApplicationWindow {
     height: 800
     minimumWidth: 980
     minimumHeight: 640
-    visible: true
+    visible: false // shown from C++ (stays hidden when started with Windows into the tray)
     title: "VoiceStudio"
     color: Theme.background
     font.family: Theme.fontFamily
@@ -26,6 +26,15 @@ ApplicationWindow {
         advanced:    { title: "Advanced", icon: "\uE9F5", subtitle: "Buffers, recovery, logging and diagnostics", index: 6 },
         settings:    { title: "Settings", icon: "\uE713", subtitle: "General options, privacy and help", index: 7 }
     })
+    // Closing the window keeps VoiceStudio running in the tray (unless turned off in Settings).
+    onClosing: (close) => {
+        if (backend.trayAvailable && backend.closeToTray) {
+            close.accepted = false
+            window.hide()
+            backend.notifyHiddenToTray()
+        }
+    }
+
     readonly property var navKeys: backend.advancedUi
         ? ["home", "sound", "noise", "effects", "devices", "performance", "advanced", "settings"]
         : ["home", "sound", "devices", "settings"]

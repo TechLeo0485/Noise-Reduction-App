@@ -30,12 +30,18 @@ WizardStyle=modern
 ; Administrator install: the Visual C++ runtime goes to System32.
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\VoiceStudio.exe
+SetupIconFile=..\ui\icons\voicestudio.ico
 ; Updating while VoiceStudio runs would fail on locked files.
 CloseApplications=yes
 RestartApplications=no
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
+Name: "autostart"; Description: "Start VoiceStudio with Windows (runs in the notification area)"
+
+[Registry]
+; Same entry as Settings > "Start with Windows" in the app.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "VoiceStudio"; ValueData: """{app}\VoiceStudio.exe"" --minimized"; Flags: uninsdeletevalue; Tasks: autostart
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
@@ -89,6 +95,9 @@ end;
 // Ask whether to delete settings, logs, crash dumps and the saved voice sample (%LOCALAPPDATA%\VoiceStudio).
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  // The app can also enable "Start with Windows" itself; never leave a dangling entry behind.
+  if CurUninstallStep = usUninstall then
+    RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'VoiceStudio');
   if CurUninstallStep = usPostUninstall then
     // Silent uninstalls (/SUPPRESSMSGBOXES) keep the user's data: the default answer is No.
     if SuppressibleMsgBox('Also delete your VoiceStudio settings, logs and saved voice sample?', mbConfirmation, MB_YESNO,

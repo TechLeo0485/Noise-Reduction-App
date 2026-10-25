@@ -1,0 +1,2 @@
+// Windows resources for VoiceStudio.exe: the application icon (Explorer, taskbar, shortcuts, title bar).
+IDI_ICON1 ICON "../../ui/icons/voicestudio.ico"

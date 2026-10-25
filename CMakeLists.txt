@@ -111,14 +111,19 @@ if(VOICESTUDIO_BUILD_APP OR VOICESTUDIO_BUILD_TESTS)
 endif()
 
 if(VOICESTUDIO_BUILD_APP)
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Qml Quick QuickControls2)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Widgets Qml Quick QuickControls2)
     qt_standard_project_setup(REQUIRES 6.5)
 
     qt_add_executable(VoiceStudio WIN32
         src/app/main.cpp
         src/app/EngineController.cpp
         src/app/EngineController.h
-        src/app/CrashHandler.cpp)
+        src/app/TrayIcon.cpp
+        src/app/TrayIcon.h
+        src/app/CrashHandler.cpp
+        src/app/VoiceStudio.rc)
+    # Window and tray icon (the .rc embeds the same file as the exe icon).
+    qt_add_resources(VoiceStudio "app_icons" PREFIX "/icons" BASE ui/icons FILES ui/icons/voicestudio.ico)
 
     # QML files live in ui/ subdirectories; let Qt generate a qmldir for each (Qt 6.8+ policy).
     if(QT_KNOWN_POLICY_QTP0004)
@@ -158,7 +163,7 @@ if(VOICESTUDIO_BUILD_APP)
             ui/screens/AdvancedScreen.qml)
 
     target_link_libraries(VoiceStudio PRIVATE
-        vs_core vs_settings Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 dbghelp)
+        vs_core vs_settings Qt6::Gui Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 dbghelp)
     voicestudio_deploy_voxlock(VoiceStudio)
 
     # Copy the Qt DLLs, plugins and QML modules next to the exe after every build so it runs

@@ -26,6 +26,20 @@ ScreenPage {
                     onToggled: (value) => backend.autoRecover = value
                 }
                 VsSwitch {
+                    label: "Keep running when I close the window"
+                    description: "VoiceStudio stays in the notification area (next to the clock) and keeps cleaning your "
+                                 + "voice. Right-click its icon to quit."
+                    enabled: backend.trayAvailable
+                    checked: backend.closeToTray
+                    onToggled: (value) => backend.closeToTray = value
+                }
+                VsSwitch {
+                    label: "Start with Windows"
+                    description: "Starts in the notification area when you sign in, so your voice is cleaned in every call"
+                    checked: backend.startWithWindows
+                    onToggled: (value) => backend.startWithWindows = value
+                }
+                VsSwitch {
                     label: "Advanced controls"
                     description: "Show detailed screens: noise gate timing, equalizer bands, buffers, performance measurements"
                     checked: backend.advancedUi

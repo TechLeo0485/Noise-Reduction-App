@@ -28,6 +28,7 @@ cable as their microphone. Everything runs on your machine: no cloud, no account
 | Live metrics: P50/P95/P99 timings, dropouts, drift, latency breakdown, CPU, memory | Implemented |
 | Virtual cable test and loopback latency measurement | Implemented |
 | Advanced AI (ONNX Runtime, GPU/NPU) | **Not in this build**: UI shows it as unavailable |
+| Runs in the notification area: closing the window keeps processing; optional start with Windows (`--minimized`) | Implemented |
 | Strict voice isolation (removes other people's voices, VoxLock INT8 Full, CPU) | Implemented: record your voice once; fail-closed (silence, never the raw microphone) |
 | Custom virtual audio driver | Not planned for the MVP (uses VB-CABLE) |
 
