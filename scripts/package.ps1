@@ -42,9 +42,30 @@ try {
     if (-not $redist) { throw "vc_redist.x64.exe not found under $vsPath\VC\Redist\MSVC" }
     Write-Host "Bundling $redist"
 
+    # VB-CABLE (VB-Audio Software, donationware). VB-Audio allows embedding it with a silent installation
+    # if users can identify it as a VB-Audio product and donate (https://vb-audio.com/Services/licensing.htm);
+    # setup names it, credits www.vb-cable.com and links to it. Pinned to Driver Pack 45 (October 2024).
+    $vbUrl = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip"
+    $vbSha = "B950E39F01AF1D04EA623C8F6D8EB9B6EA5C477C637295FABF20631C85116BFB"
+    $vbCache = Join-Path $root "build\_deps\vbcable"
+    $vbZip = Join-Path $vbCache "VBCABLE_Driver_Pack45.zip"
+    New-Item -ItemType Directory -Force $vbCache | Out-Null
+    if ($env:VBCABLE_ZIP) { Copy-Item $env:VBCABLE_ZIP $vbZip -Force }
+    if (-not (Test-Path $vbZip) -or (Get-FileHash $vbZip -Algorithm SHA256).Hash -ne $vbSha) {
+        Write-Host "Downloading $vbUrl"
+        Invoke-WebRequest -Uri $vbUrl -OutFile $vbZip -UseBasicParsing
+    }
+    if ((Get-FileHash $vbZip -Algorithm SHA256).Hash -ne $vbSha) {
+        throw "VB-CABLE driver pack does not match the pinned SHA-256 (VB-Audio may have published a new version)"
+    }
+    $vbDir = Join-Path $vbCache "pack"
+    if (Test-Path $vbDir) { Remove-Item -Recurse -Force $vbDir }
+    Expand-Archive -Path $vbZip -DestinationPath $vbDir
+    Write-Host "Bundling VB-CABLE from $vbDir"
+
     if ($iscc) {
         $version = (Select-String -Path (Join-Path $root "CMakeLists.txt") -Pattern 'VERSION (\d+\.\d+\.\d+)').Matches[0].Groups[1].Value
-        & $iscc.Source "/DAppVersion=$version" "/DSourceDir=$installDir" "/DVCRedist=$redist" "/O$(Join-Path $root 'dist')" (Join-Path $root "installer\VoiceStudio.iss")
+        & $iscc.Source "/DAppVersion=$version" "/DSourceDir=$installDir" "/DVCRedist=$redist" "/DVBCableDir=$vbDir" "/O$(Join-Path $root 'dist')" (Join-Path $root "installer\VoiceStudio.iss")
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
         Write-Host "Installer written to dist\"
     } else {

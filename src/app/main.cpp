@@ -69,6 +69,9 @@ int main(int argc, char* argv[]) {
             controller.setTrayAvailable(tray.available());
             // With a tray icon, closing the window only hides it; "Quit" in the tray menu ends the app.
             QApplication::setQuitOnLastWindowClosed(!tray.available());
+            if (QApplication::arguments().contains(QStringLiteral("--guide"))) { // Start menu "User Guide"
+                QMetaObject::invokeMethod(window, "showPage", Q_ARG(QVariant, QStringLiteral("help")));
+            }
             if (!startMinimized || !tray.available()) {
                 tray.showWindow();
             }

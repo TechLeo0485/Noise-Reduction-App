@@ -201,6 +201,8 @@ public:
     Q_INVOKABLE void notifyHiddenToTray() { emit hiddenToTray(); }
     Q_INVOKABLE void openLogFolder();
     Q_INVOKABLE QString diagnosticsReport() const;
+    // The user guide (docs/user-guide.md, compiled into the app) as Markdown.
+    Q_INVOKABLE QString userGuide() const;
     Q_INVOKABLE void copyToClipboard(const QString& text);
 
 signals:

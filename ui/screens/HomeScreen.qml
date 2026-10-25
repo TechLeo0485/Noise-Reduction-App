@@ -94,7 +94,8 @@ ScreenPage {
             status: page.su.cableInstalled ? "ok" : "problem"
             title: page.su.cableInstalled ? "Virtual cable installed (VB-CABLE)" : "Virtual cable is not installed"
             detail: page.su.cableInstalled ? "This is how other apps receive your cleaned voice."
-                    : "It is free. Download it, run VBCABLE_Setup_x64.exe as administrator, then restart your PC."
+                    : "Run the VoiceStudio setup again with \"Install VB-CABLE\" ticked, then restart your PC. "
+                      + "Or download it yourself (free)."
             actionText: page.su.cableInstalled ? "" : "Download"
             onActionClicked: Qt.openUrlExternally("https://vb-audio.com/Cable/")
         }

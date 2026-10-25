@@ -24,8 +24,15 @@ ApplicationWindow {
         devices:     { title: "Devices", icon: "\uE7F5", subtitle: "Your microphone, where your voice is sent, and your headphones", index: 4 },
         performance: { title: "Performance", icon: "\uEC4A", subtitle: "Hardware, processing backend and live measurements", index: 5 },
         advanced:    { title: "Advanced", icon: "\uE9F5", subtitle: "Buffers, recovery, logging and diagnostics", index: 6 },
-        settings:    { title: "Settings", icon: "\uE713", subtitle: "General options, privacy and help", index: 7 }
+        settings:    { title: "Settings", icon: "\uE713", subtitle: "General options, privacy and help", index: 7 },
+        help:        { title: "Help", icon: "\uE897", subtitle: "How to set up VoiceStudio and use it in your calls", index: 8 }
     })
+    // Opens a page by key (used by C++, e.g. the "User Guide" shortcut opens "help").
+    function showPage(key) {
+        if (navKeys.indexOf(key) >= 0)
+            currentKey = key
+    }
+
     // Closing the window keeps VoiceStudio running in the tray (unless turned off in Settings).
     onClosing: (close) => {
         if (backend.trayAvailable && backend.closeToTray) {
@@ -36,8 +43,8 @@ ApplicationWindow {
     }
 
     readonly property var navKeys: backend.advancedUi
-        ? ["home", "sound", "noise", "effects", "devices", "performance", "advanced", "settings"]
-        : ["home", "sound", "devices", "settings"]
+        ? ["home", "sound", "noise", "effects", "devices", "performance", "advanced", "settings", "help"]
+        : ["home", "sound", "devices", "settings", "help"]
     property string currentKey: "home"
     // Falls back to Home if the current page disappears (e.g. advanced controls turned off).
     readonly property var currentInfo: allPages[navKeys.indexOf(currentKey) >= 0 ? currentKey : "home"]
@@ -254,6 +261,7 @@ ApplicationWindow {
                 PerformanceScreen {}     // 5
                 AdvancedScreen {}        // 6
                 SettingsScreen {}        // 7
+                HelpScreen {}            // 8
             }
         }
     }

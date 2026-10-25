@@ -124,6 +124,8 @@ if(VOICESTUDIO_BUILD_APP)
         src/app/VoiceStudio.rc)
     # Window and tray icon (the .rc embeds the same file as the exe icon).
     qt_add_resources(VoiceStudio "app_icons" PREFIX "/icons" BASE ui/icons FILES ui/icons/voicestudio.ico)
+    # The Help page renders the user guide from the binary.
+    qt_add_resources(VoiceStudio "user_guide" PREFIX "/docs" BASE docs FILES docs/user-guide.md)
 
     # QML files live in ui/ subdirectories; let Qt generate a qmldir for each (Qt 6.8+ policy).
     if(QT_KNOWN_POLICY_QTP0004)
@@ -153,6 +155,7 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/VsSlider.qml
             ui/components/VsSwitch.qml
             ui/components/VoiceIsolationCard.qml
+            ui/components/DeviceTile.qml
             ui/screens/HomeScreen.qml
             ui/screens/SoundScreen.qml
             ui/screens/SettingsScreen.qml
@@ -160,7 +163,8 @@ if(VOICESTUDIO_BUILD_APP)
             ui/screens/VoiceEffectsScreen.qml
             ui/screens/DevicesScreen.qml
             ui/screens/PerformanceScreen.qml
-            ui/screens/AdvancedScreen.qml)
+            ui/screens/AdvancedScreen.qml
+            ui/screens/HelpScreen.qml)
 
     target_link_libraries(VoiceStudio PRIVATE
         vs_core vs_settings Qt6::Gui Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 dbghelp)
@@ -182,10 +186,13 @@ if(VOICESTUDIO_BUILD_APP)
     endif()
 
     install(TARGETS VoiceStudio RUNTIME DESTINATION .)
+    # The installer runs vc_redist itself (only when needed), and the DirectX shader compiler (dxcompiler/dxil)
+    # is only used by the Direct3D 12 backend: keep both out of the app folder (~38 MB).
     qt_generate_deploy_qml_app_script(
         TARGET VoiceStudio
         OUTPUT_SCRIPT VOICESTUDIO_DEPLOY_SCRIPT
-        NO_UNSUPPORTED_PLATFORM_ERROR)
+        NO_UNSUPPORTED_PLATFORM_ERROR
+        DEPLOY_TOOL_OPTIONS --no-compiler-runtime --no-system-dxc-compiler)
     # Qt's deploy script would put the Qt DLLs in bin/ while VoiceStudio.exe installs to the root, so the
     # installed app could not start. Deploy everything next to the exe instead.
     install(CODE "set(QT_DEPLOY_BIN_DIR \".\")")

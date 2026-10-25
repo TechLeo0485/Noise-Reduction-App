@@ -8,7 +8,7 @@
 | ONNX Runtime (Microsoft) | 1.31.0, CPU package | MIT | Strict voice isolation inference | Yes, `onnxruntime.dll` (loaded at runtime) |
 | VoxLock (Arbaz Siddiqui), models `enroll.onnx` + `chunk_int8_full.onnx`, revision a50f4e1d | 1.x | Apache-2.0 (weights and code); model code derived from WeSep (Apache-2.0) | Strict voice isolation | Yes, `models/voxlock/`. `src/ai/voxlock/VoxLockStream.cpp` and `VoxLockEnrollment.cpp` port its streaming code |
 | Microsoft Windows SDK (WASAPI, Core Audio, DXGI, AVRT, DbgHelp) | system | Windows SDK license | Platform APIs | System components |
-| VB-CABLE (VB-Audio Software) | user-installed | Donationware, proprietary | Virtual microphone | **No.** Users install it themselves; it must not be redistributed without VB-Audio's permission |
+| VB-CABLE (VB-Audio Software), www.vb-cable.com | Driver Pack 45 | Donationware, proprietary | Virtual microphone | **Yes, inside the setup** (optional task, silent install). VB-Audio allows embedding VB-CABLE with silent installation when users can identify it as a VB-Audio product and are able to donate ([licensing](https://vb-audio.com/Services/licensing.htm)); setup names it, credits www.vb-cable.com and links to the author. Company / professional deployments where users cannot donate need licenses from VB-Audio's webshop. Only the standard VB-CABLE may be bundled (not A+B / C+D). |
 
 Before release, copy the full license texts into `licenses/` in the installer:
 

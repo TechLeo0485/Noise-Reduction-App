@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QSettings>
 #include <QDesktopServices>
+#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QMetaObject>
@@ -1209,6 +1210,14 @@ void EngineController::copyToClipboard(const QString& text) {
     if (QClipboard* clipboard = QGuiApplication::clipboard()) {
         clipboard->setText(text);
     }
+}
+
+QString EngineController::userGuide() const {
+    QFile file(QStringLiteral(":/docs/user-guide.md"));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QStringLiteral("The user guide is missing from this build.");
+    }
+    return QString::fromUtf8(file.readAll());
 }
 
 QString EngineController::diagnosticsReport() const {
