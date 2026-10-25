@@ -259,6 +259,8 @@ private:
     void startVoicePlayback(std::vector<float> recording);
     void setVoiceCheck(const QString& state, const QString& message, double progress = 0.0);
     [[nodiscard]] QVariantMap buildHardwareMap() const;
+    // Hands the usable processors (CPU + GPUs) and the saved choice to voice isolation.
+    void applyProcessorChoice();
     [[nodiscard]] static QVariantList toVariantList(const std::vector<AudioDeviceInfo>& devices);
 
     QString settingsPath_;

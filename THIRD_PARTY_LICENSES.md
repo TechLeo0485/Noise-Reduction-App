@@ -6,7 +6,8 @@
 | RNNoise (Xiph.Org Foundation, Jean-Marc Valin) | 0.2 | BSD-3-Clause, including the bundled model weights | Noise suppression | Yes, statically linked |
 | Signalsmith Stretch + Signalsmith Linear (Signalsmith Audio) | 1.4.0 / 0.6.4 | MIT | Voice character (formant-preserving pitch shift) | Yes, header-only, compiled in |
 | GoogleTest | 1.15.2 | BSD-3-Clause | Tests only | No |
-| ONNX Runtime (Microsoft) | 1.31.0, CPU package | MIT | Strict voice isolation inference | Yes, `onnxruntime.dll` (loaded at runtime) |
+| ONNX Runtime (Microsoft), DirectML build (NuGet `Microsoft.ML.OnnxRuntime.DirectML`) | 1.24.4 | MIT | Strict voice isolation inference on CPU or GPU | Yes, `onnxruntime.dll` (loaded at runtime) |
+| DirectML (Microsoft), NuGet `Microsoft.AI.DirectML` | 1.15.4 | Microsoft DirectML license (redistributable inside applications using ML frameworks on Windows) | GPU inference (NVIDIA, AMD, Intel) | Yes, `DirectML.dll` |
 | VoxLock (Arbaz Siddiqui), models `enroll.onnx` + `chunk_int8_full.onnx`, revision a50f4e1d | 1.x | Apache-2.0 (weights and code); model code derived from WeSep (Apache-2.0) | Strict voice isolation | Yes, `models/voxlock/`. `src/ai/voxlock/VoxLockStream.cpp` and `VoxLockEnrollment.cpp` port its streaming code |
 | SysVAD virtual audio driver sample (Microsoft, Windows-driver-samples, commit bb68ed5e) | 2026-10 | MIT | VoiceStudio Virtual Microphone driver (`driver/`, modified) | Yes, `driver/vsvirtualmic.sys` (optional installer task) |
 | Windows Driver Kit (Microsoft), NuGet `Microsoft.Windows.WDK.x64` | 10.0.28000.2526 | WDK license | Building the driver | No (build tool only) |
@@ -19,6 +20,7 @@ Before release, copy the full license texts into `licenses/` in the installer:
   link to the Qt source code used.
 - RNNoise: `COPYING` from the RNNoise source archive.
 - ONNX Runtime: `LICENSE` and `ThirdPartyNotices.txt` from the ONNX Runtime package.
+- DirectML: `LICENSE.txt` and `ThirdPartyNotices.txt` from the Microsoft.AI.DirectML package.
 - Signalsmith Stretch / Linear: `LICENSE.txt` from each source archive.
 - SysVAD: `driver/LICENSE.sysvad.txt` (MIT, Microsoft Corporation).
 - VoxLock: `LICENSE` (Apache-2.0) and `NOTICE` from https://huggingface.co/arbazsiddiqui/voxlock

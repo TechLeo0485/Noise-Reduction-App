@@ -100,7 +100,7 @@ function(voicestudio_deploy_voxlock target)
         return()
     endif()
     add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VOICESTUDIO_ORT_DLL}" "$<TARGET_FILE_DIR:${target}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VOICESTUDIO_ORT_DLL}" ${VOICESTUDIO_DML_DLL} "$<TARGET_FILE_DIR:${target}>"
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models/voxlock"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VOICESTUDIO_VOXLOCK_FILES} "$<TARGET_FILE_DIR:${target}>/models/voxlock"
         VERBATIM)
@@ -222,7 +222,7 @@ if(VOICESTUDIO_BUILD_APP)
         message(STATUS "VoiceStudio Virtual Microphone package not built; the installer will not include it")
     endif()
     if(VOICESTUDIO_WITH_VOXLOCK)
-        install(FILES "${VOICESTUDIO_ORT_DLL}" DESTINATION .)
+        install(FILES "${VOICESTUDIO_ORT_DLL}" ${VOICESTUDIO_DML_DLL} DESTINATION .)
         install(FILES ${VOICESTUDIO_VOXLOCK_FILES} DESTINATION models/voxlock)
     endif()
 endif()

@@ -22,6 +22,7 @@ struct ChunkModelOptions {
     int framesPerRun = 2;   // K: hops per chunk.onnx call (8 ms each)
     int threads = 2;        // intra-op threads, including the calling thread
     bool allowSpinning = false; // pool threads sleep between chunks: ~0.4 instead of ~1 core, no measurable dropout difference
+    int dmlDevice = -1;         // >= 0: run on this GPU with DirectML (its IDXGIFactory::EnumAdapters index); -1: CPU
 };
 
 // ONNX Runtime (CPU) + the VoxLock INT8 Full graphs. Non-real-time: every method may block for a while
@@ -46,6 +47,8 @@ public:
                                                                 const ChunkModelOptions& options, std::string& error);
 
     [[nodiscard]] std::string description() const;
+    // This build and the loaded runtime can run models on GPUs (DirectML).
+    [[nodiscard]] static bool hasDirectMl();
 
 private:
     struct Impl;

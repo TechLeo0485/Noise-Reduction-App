@@ -47,7 +47,7 @@ TEST_F(HardwareTest, DetectsCpuAndGpus) {
     EXPECT_TRUE(hw.backends.front().available);
     for (const ProcessingBackend& b : hw.backends) {
         if (b.kind != ProcessorKind::Cpu) {
-            EXPECT_FALSE(b.available) << "No GPU/NPU inference engine exists in this build";
+            EXPECT_FALSE(b.available) << "detectHardware() without DirectML: GPUs and NPUs cannot run inference";
         }
     }
 }

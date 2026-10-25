@@ -15,6 +15,8 @@
 //                     --set gateUseVad=0 --set gateThresholdDb=-36); repeatable
 //   --spin 0|1        ONNX Runtime intra-op thread spinning (offline mode; the app uses 0)
 //   --log file        write the application log (e.g. which voice sample was chosen) to `file`
+//   --processor X     real-time run: where isolation runs - auto (measure CPU and GPUs, default), cpu, or a GPU id
+//                     ("gpu:10de-1c82-0"; printed at the start)
 //
 // Input WAVs may have any sample rate; the voice sample needs at least 3 s of speech.
 
@@ -26,6 +28,7 @@
 #include "audio/buffers/Resampler.h"
 #include "core/RealtimeThread.h"
 #include "diagnostics/Logger.h"
+#include "hardware/HardwareInfo.h"
 
 #include <windows.h>
 
@@ -164,7 +167,7 @@ int runOffline(const std::vector<float>& voice16k, const std::vector<float>& inp
 }
 
 int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& input48k, const std::string& outPath,
-                bool isolatorOnly, const std::vector<std::pair<std::string, float>>& overrides) {
+                bool isolatorOnly, const std::vector<std::pair<std::string, float>>& overrides, const std::string& processor) {
     const std::filesystem::path dir = exeDirectory();
     VoiceProcessingChain chain;
     EngineParameters params;
@@ -178,6 +181,26 @@ int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& in
         }
     }
     VoiceIsolator& isolator = chain.isolator();
+
+    // Same processor list as the app: the CPU, then the GPUs DirectML can use (DirectML.dll next to the exe).
+    std::error_code ec;
+    const HardwareInfo hw = detectHardware(std::filesystem::exists(dir / L"DirectML.dll", ec));
+    std::vector<IsolationProcessor> processors{{"cpu", "CPU", -1}};
+    for (const GpuInfo& g : hw.gpus) {
+        for (const ProcessingBackend& b : hw.backends) {
+            if (b.id == g.id) {
+                std::printf("accelerator: %s [%s] %s\n", b.displayName.c_str(), g.id.c_str(),
+                            b.available ? "usable" : b.detail.c_str());
+                if (b.available) {
+                    processors.push_back({g.id, g.name, g.dxgiIndex});
+                }
+            }
+        }
+    }
+    for (const std::string& i : hw.ignoredAdapters) {
+        std::printf("ignored: %s\n", i.c_str());
+    }
+    isolator.setProcessors(processors, processor);
 
     const std::int64_t t0 = HighResClock::now();
     isolator.initialize(dir, dir / L"models" / L"voxlock", {});
@@ -195,6 +218,15 @@ int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& in
     }
     std::printf("%s | K=%d (%d ms chunks), %d threads | calibration p50 %.2f ms, p95 %.2f ms\n", st.backend.c_str(),
                 st.framesPerRun, st.framesPerRun * 8, st.threads, st.calibrationP50Ms, st.calibrationP95Ms);
+    for (const ProcessorTrial& t : st.trials) {
+        if (t.error.empty()) {
+            std::printf("  measured %-34s %2d ms chunks  p50 %6.2f ms  p95 %6.2f ms  %s\n", t.name.c_str(),
+                        t.framesPerRun * 8, t.p50Ms, t.p95Ms, t.realTime ? "keeps up" : "too slow");
+        } else {
+            std::printf("  measured %-34s failed: %s\n", t.name.c_str(), t.error.c_str());
+        }
+    }
+    std::printf("runs on: %s\n", st.processorName.c_str());
 
     timeBeginPeriod(1);
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
@@ -288,6 +320,7 @@ int main(int argc, char** argv) {
     bool spin = false;
     std::vector<std::pair<std::string, float>> overrides;
     int k = 2;
+    std::string processor = "auto";
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string(); };
@@ -299,6 +332,7 @@ int main(int argc, char** argv) {
         else if (a == "--k") k = std::max(1, std::atoi(next().c_str()));
         else if (a == "--spin") spin = next() != "0";
         else if (a == "--log") Logger::instance().open(next());
+        else if (a == "--processor") processor = next();
         else if (a == "--set") {
             const std::string kv = next();
             const auto eq = kv.find('=');
@@ -315,5 +349,5 @@ int main(int argc, char** argv) {
         !load(inPath, offline ? voxlock::kSampleRate : VoiceProcessingChain::kSampleRate, input)) {
         return 1;
     }
-    return offline ? runOffline(voice16k, input, outPath, k, spin) : runRealtime(voice16k, input, outPath, isolatorOnly, overrides);
+    return offline ? runOffline(voice16k, input, outPath, k, spin) : runRealtime(voice16k, input, outPath, isolatorOnly, overrides, processor);
 }

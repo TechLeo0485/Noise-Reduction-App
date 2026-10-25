@@ -471,6 +471,198 @@ void VoiceIsolator::publish(std::unique_ptr<voxlock::IChunkModel> model, int fra
     }
 }
 
+int pickProcessor(const std::vector<ProcessorTrial>& trials) {
+    int best = -1;
+    for (int i = 0; i < static_cast<int>(trials.size()); ++i) {
+        const ProcessorTrial& t = trials[static_cast<std::size_t>(i)];
+        if (!t.error.empty() || t.framesPerRun <= 0) {
+            continue;
+        }
+        if (best < 0) {
+            best = i;
+            continue;
+        }
+        const ProcessorTrial& b = trials[static_cast<std::size_t>(best)];
+        const double headroom = t.p95Ms / (t.framesPerRun * kHopMs);
+        const double bestHeadroom = b.p95Ms / (b.framesPerRun * kHopMs);
+        bool better = false;
+        if (t.realTime != b.realTime) {
+            better = t.realTime;
+        } else if (t.realTime && t.framesPerRun != b.framesPerRun) {
+            better = t.framesPerRun < b.framesPerRun; // lower latency
+        } else {
+            better = headroom < bestHeadroom - 0.02; // clearly more headroom; on a tie the earlier (CPU) stays
+        }
+        if (better) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+void VoiceIsolator::setProcessors(std::vector<IsolationProcessor> available, std::string preferred) {
+    {
+        std::lock_guard lock(processorsMutex_);
+        bool same = preferred == preferredProcessor_ && available.size() == processors_.size();
+        for (std::size_t i = 0; same && i < available.size(); ++i) {
+            same = available[i].id == processors_[i].id && available[i].dmlDevice == processors_[i].dmlDevice;
+        }
+        if (same) {
+            return;
+        }
+        processors_ = std::move(available);
+        preferredProcessor_ = std::move(preferred);
+    }
+    if (state() == IsolationState::NotBuilt) {
+        return;
+    }
+    post([this] {
+        if (!haveTensors_ || testFactory_) {
+            return; // used by the next voice preparation
+        }
+        const IsolationState before = state();
+        setStatus(before, "Measuring this computer's speed...", true);
+        std::string error;
+        if (!calibrateAndPublish(tensors_, error)) {
+            logError("Voice isolation: re-calibration failed: " + error);
+            setStatus(before, "Voice isolation could not switch processor: " + error, false);
+        }
+    });
+}
+
+bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensors, std::string& error) {
+#if defined(VOICESTUDIO_HAS_VOXLOCK)
+    std::vector<IsolationProcessor> candidates;
+    std::string preferred;
+    {
+        std::lock_guard lock(processorsMutex_);
+        preferred = preferredProcessor_;
+        for (const IsolationProcessor& p : processors_) {
+            if (preferred == "auto" || p.id == preferred) {
+                candidates.push_back(p);
+            }
+        }
+    }
+    const bool cpuListed = std::any_of(candidates.begin(), candidates.end(), [](const auto& p) { return p.dmlDevice < 0; });
+    if (!cpuListed) {
+        candidates.push_back({"cpu", "CPU", -1}); // fallback if the chosen GPU cannot run the model
+    }
+
+    // For each processor: the smallest chunk K that keeps a safe margin. Each extra hop adds 8 ms of latency.
+    std::vector<ProcessorTrial> trials;
+    std::vector<std::unique_ptr<voxlock::IChunkModel>> models;
+    std::mt19937 rng(1234);
+    std::normal_distribution<float> noise(0.0f, 0.05f);
+    for (std::size_t c = 0; c < candidates.size(); ++c) {
+        const IsolationProcessor& processor = candidates[c];
+        const bool fallbackOnly = !cpuListed && processor.dmlDevice < 0;
+        if (fallbackOnly && pickProcessor(trials) >= 0) {
+            break; // the chosen GPU works: no need to measure the CPU fallback
+        }
+        ProcessorTrial trial;
+        trial.id = processor.id;
+        trial.name = processor.name;
+        std::unique_ptr<voxlock::IChunkModel> best;
+        for (int k : {2, 3, 4, 5}) {
+            voxlock::ChunkModelOptions options;
+            options.framesPerRun = k;
+            options.threads = processor.dmlDevice >= 0 ? 1 : kThreads;
+            options.dmlDevice = processor.dmlDevice;
+            std::string createError;
+            auto model = runtime_->createChunkModel(tensors, options, createError);
+            if (!model) {
+                trial.error = createError;
+                break;
+            }
+            std::vector<float> wav(static_cast<std::size_t>(voxlock::chunkInputSamples(k)));
+            for (float& v : wav) {
+                v = noise(rng);
+            }
+            std::vector<float> frames(static_cast<std::size_t>(k) * voxlock::kNfft);
+            std::vector<float> h[2] = {std::vector<float>(voxlock::kStateSize), std::vector<float>(voxlock::kStateSize)};
+            std::vector<float> cs[2] = {std::vector<float>(voxlock::kStateSize), std::vector<float>(voxlock::kStateSize)};
+            std::vector<double> times;
+            int s = 0;
+            bool failed = false;
+            for (int i = 0; i < 46; ++i) {
+                const std::int64_t t0 = HighResClock::now();
+                if (!model->run(wav.data(), h[s].data(), cs[s].data(), frames.data(), h[s ^ 1].data(), cs[s ^ 1].data())) {
+                    failed = true;
+                    break;
+                }
+                s ^= 1;
+                if (i >= 6) { // the first runs include warm-up (and shader compilation on GPUs)
+                    times.push_back(HighResClock::ticksToMilliseconds(HighResClock::now() - t0));
+                }
+            }
+            if (failed) {
+                trial.error = "inference failed during calibration";
+                break;
+            }
+            std::sort(times.begin(), times.end());
+            const double budget = k * kHopMs;
+            trial.framesPerRun = k;
+            trial.p50Ms = times[times.size() / 2];
+            trial.p95Ms = times[times.size() * 95 / 100];
+            trial.realTime = trial.p50Ms <= 0.75 * budget && trial.p95Ms <= budget;
+            best = std::move(model);
+            logInfo("Voice isolation calibration on " + processor.name + ", K=" + std::to_string(k) + ": p50 " +
+                    std::to_string(trial.p50Ms) + " ms, p95 " + std::to_string(trial.p95Ms) + " ms per " +
+                    std::to_string(budget) + " ms of audio");
+            if (trial.realTime) {
+                break;
+            }
+        }
+        if (!trial.error.empty()) {
+            trial.framesPerRun = 0;
+            best.reset();
+            logWarning("Voice isolation cannot use " + processor.name + ": " + trial.error);
+        }
+        trials.push_back(trial);
+        models.push_back(std::move(best));
+    }
+
+    const int chosen = pickProcessor(trials);
+    if (chosen < 0) {
+        error = trials.empty() ? "no processor available" : trials.front().error;
+        return false;
+    }
+    const ProcessorTrial& t = trials[static_cast<std::size_t>(chosen)];
+    const IsolationProcessor& processor = candidates[static_cast<std::size_t>(chosen)];
+    publish(std::move(models[static_cast<std::size_t>(chosen)]), t.framesPerRun);
+    currentDmlDevice_ = processor.dmlDevice;
+    health_.clear();
+    logInfo("Voice isolation runs on " + processor.name + " with " + std::to_string(t.framesPerRun * 8) + " ms chunks" +
+            (preferred == "auto" ? " (chosen automatically)" : ""));
+    {
+        std::lock_guard lock(statusMutex_);
+        status_.framesPerRun = t.framesPerRun;
+        status_.threads = processor.dmlDevice >= 0 ? 1 : kThreads;
+        status_.calibrationP50Ms = t.p50Ms;
+        status_.calibrationP95Ms = t.p95Ms;
+        status_.processorId = processor.id;
+        status_.processorName = processor.name;
+        status_.trials = trials;
+    }
+    std::string where = processor.dmlDevice >= 0 ? " on " + processor.name : std::string();
+    if (preferred != "auto" && preferred != processor.id) {
+        where += " (the chosen processor could not run it)";
+    }
+    if (!t.realTime) {
+        setStatus(IsolationState::Ready,
+                  "This computer is barely fast enough for real-time isolation" + where + "; expect short silent gaps.",
+                  false);
+    } else {
+        setStatus(IsolationState::Ready, "Isolating your voice" + where + ".", false);
+    }
+    return true;
+#else
+    (void)tensors;
+    error = "not included in this build";
+    return false;
+#endif
+}
+
 bool VoiceIsolator::prepareVoice(const std::vector<float>& audio16k, std::string& error) {
     if (testFactory_) {
         const int k = std::max(1, status().framesPerRun);
@@ -493,72 +685,11 @@ bool VoiceIsolator::prepareVoice(const std::vector<float>& audio16k, std::string
         return false;
     }
 
-    // Calibrate the chunk size K on this machine: the smallest K whose measured inference time leaves a
-    // safe margin. Each extra hop adds 8 ms of latency, so K is kept as small as the CPU allows.
-    std::unique_ptr<voxlock::IChunkModel> chosen;
-    int chosenK = 0;
-    double p50 = 0.0;
-    double p95 = 0.0;
-    std::mt19937 rng(1234);
-    std::normal_distribution<float> noise(0.0f, 0.05f);
-    for (int k : {2, 3, 4, 5}) {
-        voxlock::ChunkModelOptions options;
-        options.framesPerRun = k;
-        options.threads = kThreads;
-        auto model = runtime_->createChunkModel(tensors, options, error);
-        if (!model) {
-            return false;
-        }
-        std::vector<float> wav(static_cast<std::size_t>(voxlock::chunkInputSamples(k)));
-        for (float& v : wav) {
-            v = noise(rng);
-        }
-        std::vector<float> frames(static_cast<std::size_t>(k) * voxlock::kNfft);
-        std::vector<float> h[2] = {std::vector<float>(voxlock::kStateSize), std::vector<float>(voxlock::kStateSize)};
-        std::vector<float> c[2] = {std::vector<float>(voxlock::kStateSize), std::vector<float>(voxlock::kStateSize)};
-        std::vector<double> times;
-        int s = 0;
-        for (int i = 0; i < 46; ++i) {
-            const std::int64_t t0 = HighResClock::now();
-            if (!model->run(wav.data(), h[s].data(), c[s].data(), frames.data(), h[s ^ 1].data(), c[s ^ 1].data())) {
-                error = "inference failed during calibration";
-                return false;
-            }
-            s ^= 1;
-            if (i >= 6) {
-                times.push_back(HighResClock::ticksToMilliseconds(HighResClock::now() - t0));
-            }
-        }
-        std::sort(times.begin(), times.end());
-        p50 = times[times.size() / 2];
-        p95 = times[times.size() * 95 / 100];
-        const double budget = k * kHopMs;
-        logInfo("Voice isolation calibration K=" + std::to_string(k) + ": p50 " + std::to_string(p50) + " ms, p95 " +
-                std::to_string(p95) + " ms per " + std::to_string(budget) + " ms of audio");
-        chosen = std::move(model);
-        chosenK = k;
-        if (p50 <= 0.75 * budget && p95 <= budget) {
-            break;
-        }
+    if (!calibrateAndPublish(tensors, error)) {
+        return false;
     }
-    publish(std::move(chosen), chosenK);
     tensors_ = std::move(tensors);
     haveTensors_ = true;
-    health_.clear();
-    {
-        std::lock_guard lock(statusMutex_);
-        status_.framesPerRun = chosenK;
-        status_.threads = kThreads;
-        status_.calibrationP50Ms = p50;
-        status_.calibrationP95Ms = p95;
-    }
-    const double budget = chosenK * kHopMs;
-    if (p50 > 0.75 * budget || p95 > budget) {
-        setStatus(IsolationState::Ready,
-                  "This computer is barely fast enough for real-time isolation; expect short silent gaps.", false);
-    } else {
-        setStatus(IsolationState::Ready, "Isolating your voice.", false);
-    }
     return true;
 #else
     (void)audio16k;
@@ -625,7 +756,8 @@ void VoiceIsolator::monitor() {
 #if defined(VOICESTUDIO_HAS_VOXLOCK)
         voxlock::ChunkModelOptions options;
         options.framesPerRun = next;
-        options.threads = kThreads;
+        options.threads = currentDmlDevice_ >= 0 ? 1 : kThreads;
+        options.dmlDevice = currentDmlDevice_;
         model = runtime_->createChunkModel(tensors_, options, error);
 #endif
     }

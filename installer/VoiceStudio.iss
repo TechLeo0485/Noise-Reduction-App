@@ -48,12 +48,15 @@ CloseApplications=yes
 RestartApplications=no
 
 [Tasks]
-#ifdef VirtualMic
-Name: "virtualmic"; Description: "Install the VoiceStudio Virtual Microphone (free test-signed driver: needs Secure Boot off and Windows Test Mode - setup guides you and asks before each change)"; Flags: unchecked
-#endif
+; One choice (radio buttons): how the voice reaches other apps.
+#define MicGroup "How your voice reaches Discord, Zoom, Teams and games (choose one):"
 #ifdef VBCableDir
-Name: "vbcable"; Description: "Install VB-CABLE, the virtual microphone that sends your voice to Zoom, Teams and Discord (required). Free donationware by VB-Audio Software, www.vb-cable.com"; Check: not HasVBCable
+Name: "vbcable"; Description: "{code:VBCableChoiceText}"; GroupDescription: "{#MicGroup}"; Flags: exclusive
 #endif
+#ifdef VirtualMic
+Name: "virtualmic"; Description: "VoiceStudio Virtual Microphone - VoiceStudio's own free driver. Needs Secure Boot off and Windows Test Mode: setup guides you and asks before each change"; GroupDescription: "{#MicGroup}"; Flags: exclusive unchecked
+#endif
+Name: "nomic"; Description: "Neither - I use another virtual microphone, or set one up later"; GroupDescription: "{#MicGroup}"; Flags: exclusive unchecked
 Name: "autostart"; Description: "Start VoiceStudio with Windows (runs in the notification area)"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
@@ -68,7 +71,7 @@ Source: "{#VCRedist}"; DestDir: "{tmp}"; DestName: "vc_redist.x64.exe"; Flags: d
 #endif
 #ifdef VBCableDir
 ; The setup program must run from an extracted folder (VB-CABLE reference manual).
-Source: "{#VBCableDir}\*"; DestDir: "{tmp}\vbcable"; Flags: recursesubdirs deleteafterinstall; Tasks: vbcable
+Source: "{#VBCableDir}\*"; DestDir: "{tmp}\vbcable"; Flags: recursesubdirs deleteafterinstall; Tasks: vbcable; Check: VBCableWasMissing
 #endif
 
 [Icons]
@@ -86,7 +89,7 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 #endif
 #ifdef VBCableDir
 ; -i installs, -h hides VB-CABLE's own dialogs. Windows still asks once to allow the VB-Audio driver.
-Filename: "{tmp}\vbcable\VBCABLE_Setup_x64.exe"; Parameters: "-i -h"; WorkingDir: "{tmp}\vbcable"; StatusMsg: "Installing VB-CABLE by VB-Audio Software. If Windows asks whether to install this device software, click Install."; Flags: waituntilterminated; Tasks: vbcable
+Filename: "{tmp}\vbcable\VBCABLE_Setup_x64.exe"; Parameters: "-i -h"; WorkingDir: "{tmp}\vbcable"; StatusMsg: "Installing VB-CABLE by VB-Audio Software. If Windows asks whether to install this device software, click Install."; Flags: waituntilterminated; Tasks: vbcable; Check: VBCableWasMissing
 Filename: "https://vb-audio.com/Cable/"; Description: "VB-CABLE is donationware by VB-Audio Software: open www.vb-cable.com to learn more or support its author"; Flags: shellexec postinstall skipifsilent nowait unchecked; Tasks: vbcable
 #endif
 #ifdef VirtualMic
@@ -99,7 +102,7 @@ Filename: "{app}\driver\vs_vmic.exe"; Parameters: "install ""{app}\driver\vsvirt
 ; Test Mode; resumes by itself after each restart. Changes nothing when the user says no.
 Filename: "{app}\driver\vs_vmic.exe"; Parameters: "finish"; StatusMsg: "Checking what the virtual microphone needs..."; Flags: waituntilterminated skipifsilent; Tasks: virtualmic
 #endif
-Filename: "https://vb-audio.com/Cable/"; Description: "Open the VB-CABLE download page (required for Zoom, Teams, Discord)"; Flags: shellexec postinstall skipifsilent nowait; Check: not HasVBCable and not VirtualMicSelected
+Filename: "https://vb-audio.com/Cable/"; Description: "Open the VB-CABLE download page (required for Zoom, Teams, Discord)"; Flags: shellexec postinstall skipifsilent nowait; Check: not HasVBCable and VBCableSelected
 Filename: "{app}\VoiceStudio.exe"; Description: "Launch VoiceStudio"; Flags: nowait postinstall skipifsilent
 
 [Code]
@@ -132,6 +135,37 @@ const
   VirtualMicCertName = 'VoiceStudio Virtual Microphone Test Signing';
   VirtualMicKey = 'Software\VoiceStudio\VirtualMicrophone';
 
+var
+  MissingVBCable: Boolean; // VB-CABLE was not installed when setup started
+
+function InitializeSetup(): Boolean;
+begin
+  MissingVBCable := not HasVBCable;
+  Result := True;
+end;
+
+function VBCableWasMissing: Boolean;
+begin
+  Result := MissingVBCable;
+end;
+
+function VBCableChoiceText(Param: String): String;
+begin
+  if HasVBCable then
+    Result := 'VB-CABLE (already installed on this PC) - works with Secure Boot on'
+  else
+    Result := 'VB-CABLE - free donationware by VB-Audio Software (www.vb-cable.com), installed now; works with Secure Boot on';
+end;
+
+function VBCableSelected: Boolean;
+begin
+#ifdef VBCableDir
+  Result := WizardIsTaskSelected('vbcable');
+#else
+  Result := not WizardIsTaskSelected('nomic');
+#endif
+end;
+
 function VirtualMicSelected: Boolean;
 begin
 #ifdef VirtualMic
@@ -146,7 +180,7 @@ end;
 function NeedRestart: Boolean;
 begin
 #ifdef VBCableDir
-  Result := WizardIsTaskSelected('vbcable') and HasVBCable;
+  Result := WizardIsTaskSelected('vbcable') and MissingVBCable and HasVBCable; // installed just now
 #else
   Result := False;
 #endif
@@ -186,7 +220,7 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if (CurStep = ssPostInstall) and not WizardSilent and not HasVBCable and not VirtualMicSelected then
+  if (CurStep = ssPostInstall) and not WizardSilent and not HasVBCable and VBCableSelected then
     MsgBox('VoiceStudio sends your cleaned voice to Zoom, Teams or Discord through the free VB-CABLE ' +
            'virtual microphone, which is not installed on this PC.' + #13#10#13#10 +
            'On the last page, leave "Open the VB-CABLE download page" ticked, install VB-CABLE ' +

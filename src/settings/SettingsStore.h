@@ -31,6 +31,8 @@ struct AppSettings {
     // The VoiceStudio Virtual Microphone was found once and VoiceStudio switched its output to it (done only once,
     // so a later manual choice of another device sticks).
     bool virtualMicAdopted = false;
+    // Where voice isolation runs: "auto" (measured on this PC) or "cpu" / a GPU id from HardwareInfo.
+    std::string processor = "auto";
     // Devices the user marked as a virtual microphone (their own driver, or any device the name check misses).
     std::vector<std::wstring> virtualDeviceIds;
 

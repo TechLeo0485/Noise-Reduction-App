@@ -59,39 +59,79 @@ endif()
 
 # ---- Strict Voice Isolation: ONNX Runtime + VoxLock INT8 Full ---------------------------------
 #
-#   ONNX Runtime 1.31  - MIT. Official prebuilt CPU package; onnxruntime.dll ships next to the exe.
+#   ONNX Runtime 1.24.4 - MIT. Official DirectML build (NuGet Microsoft.ML.OnnxRuntime.DirectML): the CPU engine
+#                        plus the DirectML engine for GPUs (NVIDIA, AMD, Intel). onnxruntime.dll ships next to the exe.
+#                        (1.24.4 is the newest DirectML build; its CPU speed equals 1.31 for VoxLock, measured.)
+#   DirectML 1.15.4      - Microsoft DirectML redistributable (NuGet Microsoft.AI.DirectML), DirectML.dll next to the exe.
+#                        Windows' own System32 copy is older; VoxLockRuntime.cpp loads this one by full path.
 #   VoxLock            - Apache-2.0 (arbazsiddiqui/voxlock). enroll.onnx + chunk_int8_full.onnx,
 #                        pinned to a Hugging Face revision and verified by SHA-256.
 #
-# Both are fetched at configure time only. The application never downloads anything at runtime.
-# Offline builds: set ONNXRUNTIME_ROOT (extracted package) and VOXLOCK_MODEL_DIR (the two .onnx files).
+# All are fetched at configure time only. The application never downloads anything at runtime.
+# Offline builds: set ONNXRUNTIME_ROOT / DIRECTML_ROOT (extracted packages) and VOXLOCK_MODEL_DIR (the two .onnx files).
+# ONNXRUNTIME_ROOT may also point at a plain CPU package (include/, lib/); GPUs are then listed as unavailable.
 if(VOICESTUDIO_WITH_VOXLOCK)
-    set(ONNXRUNTIME_URL "https://github.com/microsoft/onnxruntime/releases/download/v1.31.0/onnxruntime-win-x64-1.31.0.zip"
-        CACHE STRING "ONNX Runtime CPU package for Windows x64")
-    set(ONNXRUNTIME_URL_HASH "SHA256=3958d8a44984160692c1b4ffd0de3cb48f8c39f9d34bb31e433db06e30b82195"
+    set(ONNXRUNTIME_URL "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg"
+        CACHE STRING "ONNX Runtime DirectML package (NuGet) for Windows x64")
+    set(ONNXRUNTIME_URL_HASH "SHA256=57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681"
         CACHE STRING "Hash of the ONNX Runtime package")
     set(ONNXRUNTIME_ROOT "" CACHE PATH "Use an already-extracted ONNX Runtime package instead of downloading")
+    set(DIRECTML_URL "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg"
+        CACHE STRING "DirectML redistributable package (NuGet)")
+    set(DIRECTML_URL_HASH "SHA256=4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9"
+        CACHE STRING "Hash of the DirectML package")
+    set(DIRECTML_ROOT "" CACHE PATH "Use an already-extracted DirectML package instead of downloading")
 
     if(ONNXRUNTIME_ROOT)
         set(_ort_dir "${ONNXRUNTIME_ROOT}")
     else()
         FetchContent_Declare(onnxruntime_pkg
-            URL ${ONNXRUNTIME_URL} URL_HASH ${ONNXRUNTIME_URL_HASH}
+            URL ${ONNXRUNTIME_URL} URL_HASH ${ONNXRUNTIME_URL_HASH} DOWNLOAD_NAME onnxruntime-directml.zip
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE
             SOURCE_SUBDIR voicestudio-no-cmake)
         FetchContent_MakeAvailable(onnxruntime_pkg)
         set(_ort_dir "${onnxruntime_pkg_SOURCE_DIR}")
     endif()
-    if(NOT EXISTS "${_ort_dir}/include/onnxruntime_cxx_api.h" OR NOT EXISTS "${_ort_dir}/lib/onnxruntime.dll")
+    # NuGet layout (build/native/include, runtimes/win-x64/native) or the plain release zip (include, lib).
+    if(EXISTS "${_ort_dir}/build/native/include/onnxruntime_cxx_api.h")
+        set(_ort_include "${_ort_dir}/build/native/include")
+        set(VOICESTUDIO_ORT_DLL "${_ort_dir}/runtimes/win-x64/native/onnxruntime.dll")
+    else()
+        set(_ort_include "${_ort_dir}/include")
+        set(VOICESTUDIO_ORT_DLL "${_ort_dir}/lib/onnxruntime.dll")
+    endif()
+    if(NOT EXISTS "${_ort_include}/onnxruntime_cxx_api.h" OR NOT EXISTS "${VOICESTUDIO_ORT_DLL}")
         message(FATAL_ERROR "ONNX Runtime not found in ${_ort_dir}. Set ONNXRUNTIME_ROOT or configure with "
                             "-DVOICESTUDIO_WITH_VOXLOCK=OFF.")
     endif()
     # Headers only: the runtime is loaded explicitly with LoadLibrary (see VoxLockRuntime.cpp), so a missing
     # or broken DLL disables isolation instead of preventing the application from starting.
     add_library(onnxruntime_headers INTERFACE)
-    target_include_directories(onnxruntime_headers SYSTEM INTERFACE "${_ort_dir}/include")
-    set(VOICESTUDIO_ORT_DLL "${_ort_dir}/lib/onnxruntime.dll")
+    target_include_directories(onnxruntime_headers SYSTEM INTERFACE "${_ort_include}")
     message(STATUS "ONNX Runtime: ${_ort_dir}")
+
+    # DirectML: only with an ONNX Runtime build that has the DirectML engine (dml_provider_factory.h).
+    set(VOICESTUDIO_DML_DLL "")
+    if(EXISTS "${_ort_include}/dml_provider_factory.h")
+        if(DIRECTML_ROOT)
+            set(_dml_dir "${DIRECTML_ROOT}")
+        else()
+            FetchContent_Declare(directml_pkg
+                URL ${DIRECTML_URL} URL_HASH ${DIRECTML_URL_HASH} DOWNLOAD_NAME directml.zip
+                DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+                SOURCE_SUBDIR voicestudio-no-cmake)
+            FetchContent_MakeAvailable(directml_pkg)
+            set(_dml_dir "${directml_pkg_SOURCE_DIR}")
+        endif()
+        if(EXISTS "${_dml_dir}/bin/x64-win/DirectML.dll")
+            set(VOICESTUDIO_DML_DLL "${_dml_dir}/bin/x64-win/DirectML.dll")
+            target_compile_definitions(onnxruntime_headers INTERFACE VOICESTUDIO_HAS_DIRECTML)
+            target_include_directories(onnxruntime_headers SYSTEM INTERFACE "${_dml_dir}/include") # DirectML.h
+            message(STATUS "DirectML: ${_dml_dir}")
+        else()
+            message(WARNING "DirectML.dll not found in ${_dml_dir}: GPU voice isolation disabled")
+        endif()
+    endif()
 
     set(VOXLOCK_REVISION "a50f4e1d109301d4b6f61dec57ebb1a61e7d8f03" CACHE STRING "Hugging Face revision of arbazsiddiqui/voxlock")
     set(VOXLOCK_MODEL_DIR "" CACHE PATH "Directory holding enroll.onnx and chunk_int8_full.onnx (skips the download)")

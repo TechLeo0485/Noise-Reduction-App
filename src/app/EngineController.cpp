@@ -83,7 +83,17 @@ EngineController::EngineController(QObject* parent) : QObject(parent), settingsP
     settings_.applyParams(params_);
     logInfo("VoiceStudio starting");
 
-    hardwareInfo_ = detectHardware();
+    // GPUs can run voice isolation when the DirectML runtime ships next to the exe.
+    const std::filesystem::path exeDir = QCoreApplication::applicationDirPath().toStdWString();
+    std::error_code dmlError;
+    hardwareInfo_ = detectHardware(std::filesystem::exists(exeDir / L"DirectML.dll", dmlError));
+    selectedBackend_ = QString::fromStdString(settings_.processor);
+    for (const GpuInfo& g : hardwareInfo_.gpus) {
+        logInfo("Accelerator: " + g.name + " (" + g.id + ", DXGI " + std::to_string(g.dxgiIndex) + ")");
+    }
+    for (const std::string& ignored : hardwareInfo_.ignoredAdapters) {
+        logInfo("Ignored adapter: " + ignored);
+    }
     hardware_ = buildHardwareMap();
 
     deviceManager_ = std::make_unique<DeviceManager>();
@@ -121,6 +131,7 @@ EngineController::EngineController(QObject* parent) : QObject(parent), settingsP
 
     // Strict voice isolation: runtime and models ship next to the exe; the voice sample stays in local app data.
     const std::filesystem::path appDir = QCoreApplication::applicationDirPath().toStdWString();
+    applyProcessorChoice(); // before initialize(): the first calibration already uses it
     supervisor_->engine().isolator().initialize(appDir, appDir / L"models" / L"voxlock",
                                                 appDataDirectory() / L"voice" / L"voice_sample.wav");
     refreshIsolation();
@@ -707,15 +718,44 @@ void EngineController::setPerformanceMode(const QString& key) {
 
 void EngineController::setSelectedBackend(const QString& id) {
     // Only backends that can actually run are selectable; others are shown disabled.
+    bool known = id == QLatin1String("auto");
     for (const ProcessingBackend& b : hardwareInfo_.backends) {
-        if (qs(b.id) == id && !b.available) {
-            return;
+        if (qs(b.id) == id) {
+            if (!b.available) {
+                return;
+            }
+            known = true;
         }
     }
-    if (id != selectedBackend_) {
-        selectedBackend_ = id;
-        emit configChanged();
+    if (!known || id == selectedBackend_) {
+        return;
     }
+    selectedBackend_ = id;
+    settings_.processor = id.toStdString();
+    logInfo("Processor for voice isolation: " + settings_.processor);
+    applyProcessorChoice();
+    emit configChanged();
+    scheduleSave();
+}
+
+void EngineController::applyProcessorChoice() {
+    // CPU first, then the GPUs that can run the model (fastest first), each with its DirectML device.
+    std::vector<IsolationProcessor> processors{{"cpu", "CPU", -1}};
+    for (const GpuInfo& g : hardwareInfo_.gpus) {
+        for (const ProcessingBackend& b : hardwareInfo_.backends) {
+            if (b.id == g.id && b.available) {
+                processors.push_back({g.id, g.name, g.dxgiIndex});
+            }
+        }
+    }
+    // A saved choice whose GPU is gone (or unusable now) falls back to automatic.
+    std::string preferred = settings_.processor;
+    if (preferred != "auto" && std::none_of(processors.begin(), processors.end(),
+                                            [&](const IsolationProcessor& p) { return p.id == preferred; })) {
+        logWarning("Saved processor " + preferred + " is not available on this PC; using automatic choice");
+        preferred = "auto";
+    }
+    supervisor_->engine().isolator().setProcessors(std::move(processors), preferred);
 }
 
 void EngineController::restartEngine() {
@@ -1297,6 +1337,21 @@ void EngineController::refreshIsolation() {
     iso["threads"] = st.threads;
     iso["calibrationP50Ms"] = round2(st.calibrationP50Ms);
     iso["calibrationP95Ms"] = round2(st.calibrationP95Ms);
+    iso["processorId"] = qs(st.processorId);
+    iso["processorName"] = qs(st.processorName);
+    QVariantList trials;
+    for (const ProcessorTrial& t : st.trials) {
+        QVariantMap trial;
+        trial["id"] = qs(t.id);
+        trial["name"] = qs(t.name);
+        trial["chunkMs"] = t.framesPerRun * 8;
+        trial["p50Ms"] = round2(t.p50Ms);
+        trial["p95Ms"] = round2(t.p95Ms);
+        trial["realTime"] = t.realTime;
+        trial["error"] = qs(t.error);
+        trials.append(trial);
+    }
+    iso["trials"] = trials;
     iso["adaptations"] = st.adaptations;
     // The voice sample only matches the microphone it was recorded with.
     iso["enrolledMicrophone"] = qs(st.enrolledMicrophone);
@@ -1413,7 +1468,24 @@ QString EngineController::diagnosticsReport() const {
                  .arg(hardwareInfo_.cpu.physicalCores)
                  .arg(hardwareInfo_.cpu.logicalProcessors);
     for (const GpuInfo& g : hardwareInfo_.gpus) {
-        lines << QStringLiteral("GPU %1: %2").arg(g.index).arg(qs(g.name));
+        lines << QStringLiteral("Accelerator %1: %2 (%3, DXGI %4)").arg(g.index).arg(qs(g.name), qs(g.id)).arg(g.dxgiIndex);
+    }
+    for (const std::string& ignored : hardwareInfo_.ignoredAdapters) {
+        lines << QStringLiteral("Ignored adapter: %1").arg(qs(ignored));
+    }
+    {
+        const IsolationStatus iso = supervisor_->engine().isolator().status();
+        lines << QStringLiteral("Voice isolation processor: %1 (choice: %2)")
+                     .arg(iso.processorName.empty() ? QStringLiteral("-") : qs(iso.processorName), selectedBackend_);
+        for (const ProcessorTrial& t : iso.trials) {
+            lines << QStringLiteral("  %1: %2").arg(qs(t.name),
+                                                     t.error.empty() ? QStringLiteral("K=%1 p50 %2 ms p95 %3 ms%4")
+                                                                           .arg(t.framesPerRun)
+                                                                           .arg(t.p50Ms, 0, 'f', 2)
+                                                                           .arg(t.p95Ms, 0, 'f', 2)
+                                                                           .arg(t.realTime ? "" : " (too slow)")
+                                                                     : qs(t.error));
+        }
     }
     const EngineRuntimeInfo& i = status_.info;
     lines << QStringLiteral("Input: %1 [%2] period %3 ms, buffer %4 ms%5")
@@ -1455,31 +1527,41 @@ QVariantMap EngineController::buildHardwareMap() const {
     for (const GpuInfo& g : hardwareInfo_.gpus) {
         QVariantMap m;
         m["index"] = g.index;
+        m["id"] = qs(g.id);
         m["name"] = qs(g.name);
         m["vendor"] = qs(g.vendorName);
+        m["kind"] = g.kind == AcceleratorKind::DiscreteGpu ? QStringLiteral("discrete")
+                    : g.kind == AcceleratorKind::IntegratedGpu ? QStringLiteral("integrated") : QStringLiteral("npu");
         m["dedicatedMemoryMb"] = static_cast<double>(g.dedicatedVideoMemory / (1024 * 1024));
-        m["software"] = g.isSoftwareAdapter;
         gpus.append(m);
     }
     hw["gpus"] = gpus;
+    QStringList ignored;
+    for (const std::string& i : hardwareInfo_.ignoredAdapters) {
+        ignored << qs(i);
+    }
+    hw["ignoredAdapters"] = ignored;
 
     QVariantList backends;
     QVariantMap autoEntry;
     autoEntry["id"] = QStringLiteral("auto");
-    autoEntry["name"] = QStringLiteral("Auto");
+    autoEntry["name"] = QStringLiteral("Automatic (recommended)");
     autoEntry["available"] = true;
-    autoEntry["detail"] = QStringLiteral("Picks the fastest reliable backend. Only the CPU backend exists in this build.");
+    autoEntry["kind"] = QStringLiteral("auto");
+    autoEntry["detail"] = QStringLiteral("Measures the CPU and every usable graphics card on this PC when your voice is "
+                                         "prepared, and uses the one with the lowest delay that keeps up.");
     backends.append(autoEntry);
     for (const ProcessingBackend& b : hardwareInfo_.backends) {
         QVariantMap m;
         m["id"] = qs(b.id);
         m["name"] = qs(b.displayName);
         m["available"] = b.available;
+        m["kind"] = b.kind == ProcessorKind::Cpu ? QStringLiteral("cpu")
+                    : b.kind == ProcessorKind::Gpu ? QStringLiteral("gpu") : QStringLiteral("npu");
         m["detail"] = qs(b.detail);
         backends.append(m);
     }
     hw["backends"] = backends;
-    hw["gpuUtilization"] = QStringLiteral("Unavailable (not measured in this build)");
     return hw;
 }
 

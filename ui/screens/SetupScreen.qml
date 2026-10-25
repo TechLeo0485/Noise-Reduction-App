@@ -377,6 +377,65 @@ ScreenPage {
         subtitle: "Speed, buffers, measurements and logging"
         icon: ""
 
+        // Where voice isolation runs: Automatic measures the CPU and every usable graphics card on this PC.
+        Expander {
+            id: processorSection
+            readonly property var iso: backend.isolation
+            readonly property var trials: iso.trials !== undefined ? iso.trials : []
+            title: "Processor for voice isolation"
+            hint: iso.processorName !== undefined && iso.processorName !== ""
+                  ? "Runs on " + iso.processorName + (backend.selectedBackend === "auto" ? " (automatic)" : "")
+                  : (backend.selectedBackend === "auto" ? "Automatic" : "")
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textSecondary
+                font.pixelSize: 12
+                text: "Only \"Only send my voice\" uses it; noise removal and effects always run on the CPU. A graphics "
+                      + "card is not always faster for live voice - Automatic measures and picks the lowest delay. "
+                      + "A change is measured right away (about 10 seconds)."
+            }
+            GridLayout {
+                Layout.fillWidth: true
+                columns: page.wide ? 2 : 1
+                columnSpacing: 12
+                rowSpacing: 12
+                Repeater {
+                    model: backend.hardware.backends
+                    ModeTile {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+                        title: modelData.name
+                        description: modelData.detail
+                        badge: modelData.kind === "auto" ? "RECOMMENDED" : ""
+                        available: modelData.available
+                        selected: backend.selectedBackend === modelData.id
+                        onClicked: backend.selectedBackend = modelData.id
+                    }
+                }
+            }
+            Text {
+                visible: processorSection.trials.length > 0
+                text: "Measured on this PC"
+                color: Theme.text
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+            }
+            Repeater {
+                model: processorSection.trials
+                StatRow {
+                    required property var modelData
+                    label: modelData.name
+                    value: modelData.error !== "" ? "Cannot run: " + modelData.error
+                           : modelData.chunkMs + " ms steps, " + Theme.fmt(modelData.p50Ms, 1, "ms") + " each"
+                             + (modelData.realTime ? " - keeps up" : " - too slow")
+                    valueColor: modelData.error !== "" || !modelData.realTime ? Theme.warning : Theme.text
+                }
+            }
+        }
+
         Expander {
             title: "Speed vs. stability"
             hint: {
@@ -475,6 +534,20 @@ ScreenPage {
             StatRow { label: "CPU"; value: page.cpu.brand !== "" ? page.cpu.brand : page.cpu.vendor }
             StatRow { label: "Cores / threads"; value: page.cpu.physicalCores + " / " + page.cpu.logicalProcessors }
             StatRow { label: "Memory (available / total)"; value: page.cpu.availableMemoryGb + " / " + page.cpu.totalMemoryGb + " GB" }
+            Repeater {
+                model: backend.hardware.gpus
+                StatRow {
+                    required property var modelData
+                    label: modelData.kind === "npu" ? "NPU" : modelData.kind === "integrated" ? "Integrated graphics" : "Graphics card"
+                    value: modelData.name + (modelData.dedicatedMemoryMb >= 256
+                                             ? " (" + Math.round(modelData.dedicatedMemoryMb / 1024) + " GB)" : "")
+                }
+            }
+            StatRow {
+                visible: backend.hardware.ignoredAdapters !== undefined && backend.hardware.ignoredAdapters.length > 0
+                label: "Not used"
+                value: backend.hardware.ignoredAdapters !== undefined ? backend.hardware.ignoredAdapters.join("; ") : ""
+            }
             StatRow { label: "Process CPU (all cores)"; value: Theme.fmt(page.s.processCpuPercent, 1, "%"); monospace: true }
             StatRow { label: "Memory (working set / private)"; value: Theme.fmt(page.s.workingSetMb, 0, "") + " / " + Theme.fmt(page.s.privateMb, 0, "MB"); monospace: true }
             StatRow { label: "Chain time P50 / P99 / max"; value: Theme.fmt(page.s.frameP50Us, 0, "") + " / " + Theme.fmt(page.s.frameP99Us, 0, "") + " / " + Theme.fmt(page.s.frameMaxUs, 0, "µs"); monospace: true }

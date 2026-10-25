@@ -9,6 +9,9 @@
 // links against onnxruntime.lib.
 #define ORT_API_MANUAL_INIT
 #include <onnxruntime_cxx_api.h>
+#if defined(VOICESTUDIO_HAS_DIRECTML)
+#include <dml_provider_factory.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -31,6 +34,7 @@ struct OrtProcess {
     std::string error;
     std::string version;
     std::unique_ptr<Ort::Env> env;
+    bool directMl = false; // DirectML.dll loaded and the runtime has the DirectML engine
 };
 
 OrtProcess& ortProcess() {
@@ -43,6 +47,12 @@ Ort::Env* acquireEnv(const std::filesystem::path& dllDirectory, std::string& err
     std::lock_guard lock(p.mutex);
     if (!p.attempted) {
         p.attempted = true;
+#if defined(VOICESTUDIO_HAS_DIRECTML)
+        // Our DirectML.dll first, by full path: Windows has an older one in System32 that ONNX Runtime would
+        // otherwise pick up. Once loaded, ONNX Runtime's own LoadLibrary("DirectML.dll") gets this module.
+        const std::filesystem::path dmlDll = dllDirectory / L"DirectML.dll";
+        p.directMl = LoadLibraryExW(dmlDll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH) != nullptr;
+#endif
         const std::filesystem::path dll = dllDirectory / L"onnxruntime.dll";
         HMODULE module = LoadLibraryExW(dll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         if (module == nullptr) {
@@ -269,6 +279,26 @@ std::unique_ptr<IChunkModel> Runtime::createChunkModel(const EnrollmentTensors& 
         // Static shapes let the optimiser fold the remaining shape arithmetic as well.
         so.AddFreeDimensionOverrideByName("S", chunkInputSamples(k));
         so.AddFreeDimensionOverrideByName("K", k);
+        if (options.dmlDevice >= 0) {
+#if defined(VOICESTUDIO_HAS_DIRECTML)
+            if (!ortProcess().directMl) {
+                error = "DirectML.dll could not be loaded";
+                return nullptr;
+            }
+            // DirectML requirements: no memory pattern optimisation, sequential execution (set in baseOptions).
+            so.DisableMemPattern();
+            const OrtDmlApi* dml = nullptr;
+            Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml)));
+            if (dml == nullptr) {
+                error = "this ONNX Runtime has no DirectML engine";
+                return nullptr;
+            }
+            Ort::ThrowOnError(dml->SessionOptionsAppendExecutionProvider_DML(so, options.dmlDevice));
+#else
+            error = "this build has no GPU engine (DirectML)";
+            return nullptr;
+#endif
+        }
         Ort::Session session(*impl_->env, bound.data(), bound.size(), so);
         return std::make_unique<OrtChunkModel>(std::move(session), k);
     } catch (const std::exception& e) {
@@ -278,7 +308,12 @@ std::unique_ptr<IChunkModel> Runtime::createChunkModel(const EnrollmentTensors& 
 }
 
 std::string Runtime::description() const {
-    return "ONNX Runtime " + ortProcess().version + " (CPU), VoxLock INT8 Full";
+    return "ONNX Runtime " + ortProcess().version + (ortProcess().directMl ? " (CPU + DirectML)" : " (CPU)") +
+           ", VoxLock INT8 Full";
+}
+
+bool Runtime::hasDirectMl() {
+    return ortProcess().directMl;
 }
 
 } // namespace vs::voxlock

@@ -101,6 +101,7 @@ QByteArray SettingsStore::toJson(const AppSettings& s) {
     root["advancedUi"] = s.advancedUi;
     root["closeToTray"] = s.closeToTray;
     root["virtualMicAdopted"] = s.virtualMicAdopted;
+    root["processor"] = QString::fromStdString(s.processor);
     QJsonArray virtualIds;
     for (const std::wstring& id : s.virtualDeviceIds) {
         virtualIds.append(wide(id));
@@ -184,6 +185,10 @@ bool SettingsStore::fromJson(const QByteArray& json, AppSettings& out, QString* 
     s.advancedUi = root.value("advancedUi").toBool(false);
     s.closeToTray = root.value("closeToTray").toBool(true);
     s.virtualMicAdopted = root.value("virtualMicAdopted").toBool(false);
+    s.processor = root.value("processor").toString(QStringLiteral("auto")).toStdString();
+    if (s.processor.empty() || s.processor.size() > 64) {
+        s.processor = "auto";
+    }
     for (const QJsonValue& v : root.value("virtualDeviceIds").toArray()) {
         const QString id = v.toString();
         if (!id.isEmpty() && s.virtualDeviceIds.size() < 64) {

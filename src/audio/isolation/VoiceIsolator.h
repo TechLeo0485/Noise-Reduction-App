@@ -32,6 +32,29 @@ enum class IsolationState : int {
 
 [[nodiscard]] const char* isolationStateName(IsolationState state) noexcept;
 
+// A processor the isolation model can run on (see VoiceIsolator::setProcessors()).
+struct IsolationProcessor {
+    std::string id;     // "cpu" or a GpuInfo::id ("gpu:10de-2504-0")
+    std::string name;   // for the UI and the log
+    int dmlDevice = -1; // DirectML device (DXGI adapter index); -1 = CPU
+};
+
+// The calibration result of one processor: the smallest chunk that keeps up, or the last one tried.
+struct ProcessorTrial {
+    std::string id;
+    std::string name;
+    int framesPerRun = 0;  // K (8 ms hops per inference)
+    double p50Ms = 0.0;
+    double p95Ms = 0.0;
+    bool realTime = false; // p50 <= 75 % and p95 <= 100 % of the chunk's duration
+    std::string error;     // the processor could not run the model (then the other fields are unset)
+};
+
+// Picks the processor to use from calibration results: among those that keep up, the smallest chunk (lowest
+// latency), then the most headroom (p95 / chunk duration); if none keeps up, the most headroom. Results with an
+// error are skipped. Returns -1 if none ran.
+[[nodiscard]] int pickProcessor(const std::vector<ProcessorTrial>& trials);
+
 struct IsolationStatus {
     IsolationState state = IsolationState::Uninitialized;
     std::string message;         // user-facing
@@ -45,6 +68,9 @@ struct IsolationStatus {
     std::string enrolledMicrophone; // microphone the voice sample was recorded with (empty if unknown)
     int adaptations = 0;            // times the chunk size was raised at runtime because the CPU fell behind
     double savedSeconds = 0.0;      // length of the saved recording (all sessions added together)
+    std::string processorId;        // where the model runs: "cpu" or a GPU id
+    std::string processorName;
+    std::vector<ProcessorTrial> trials; // last calibration, one entry per processor measured
     double prepareProgress = 0.0;   // 0..1 while a new voice is being prepared (busy)
 };
 
@@ -93,6 +119,9 @@ public:
     // different microphone is in use. Asynchronous. On a validation error the previous voice stays
     // active and status().message explains.
     void enroll(std::vector<float> audio16k, std::string microphone = {}, bool append = false);
+    // Processors the model may run on (CPU first, then GPUs) and the user's choice: "auto" (measure all, use the
+    // best) or one id. Re-calibrates the running voice when this changes. Without a call: CPU only.
+    void setProcessors(std::vector<IsolationProcessor> available, std::string preferred);
     // Deletes the saved voice. While isolation is enabled the output is silent until a new voice is enrolled.
     void deleteEnrollment();
     // Folder of the saved voice (sample and full recording); empty before initialize().
@@ -160,6 +189,8 @@ private:
     [[nodiscard]] std::filesystem::path microphoneFile() const;
     [[nodiscard]] std::filesystem::path recordingFile() const;
     bool prepareVoice(const std::vector<float>& audio16k, std::string& error);
+    // Measures the allowed processors with `tensors` and publishes the best model (loader thread).
+    bool calibrateAndPublish(const voxlock::EnrollmentTensors& tensors, std::string& error);
     // The 3 s voice sample for a whole recording (see enroll()). Reports progress as `state` + busy.
     [[nodiscard]] std::vector<float> chooseVoiceSample(const std::vector<float>& audio16k, IsolationState state);
     [[nodiscard]] double savedRecordingSeconds() const;
@@ -179,6 +210,10 @@ private:
     std::unique_ptr<voxlock::Runtime> runtime_; // loader thread only
     ModelFactory testFactory_;
     voxlock::EnrollmentTensors tensors_;        // loader thread only: current voice, for rebuilding sessions
+    std::mutex processorsMutex_;
+    std::vector<IsolationProcessor> processors_{{"cpu", "CPU", -1}};
+    std::string preferredProcessor_ = "auto";
+    int currentDmlDevice_ = -1;                 // loader thread only: processor of the published model
     bool haveTensors_ = false;
 
     // Health monitor (loader thread, once per second while idle): underruns and inference failures over time.
