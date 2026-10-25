@@ -15,15 +15,23 @@ ApplicationWindow {
     color: Theme.background
     font.family: Theme.fontFamily
 
-    property int currentPage: 0
-    readonly property var pages: [
-        { title: "Dashboard", icon: "", subtitle: "Live overview of your processed microphone" },
-        { title: "Noise Reduction", icon: "", subtitle: "Suppression engine, strength and noise gate" },
-        { title: "Voice Effects", icon: "", subtitle: "Equalizer, dynamics, pitch and presets" },
-        { title: "Audio Devices", icon: "", subtitle: "Microphone, virtual output and monitoring" },
-        { title: "Performance", icon: "", subtitle: "Hardware, processing backend and live measurements" },
-        { title: "Advanced", icon: "", subtitle: "Buffers, recovery, logging and diagnostics" }
-    ]
+    // Pages are addressed by key; `index` is the position in the StackLayout below.
+    readonly property var allPages: ({
+        home:        { title: "Home", icon: "\uE80F", subtitle: "Check that everything works and control your voice", index: 0 },
+        sound:       { title: "Sound", icon: "\uE9D9", subtitle: "Noise removal, voice style and tone", index: 1 },
+        noise:       { title: "Noise Reduction", icon: "\uE720", subtitle: "Suppression engine, strength and noise gate in detail", index: 2 },
+        effects:     { title: "Voice Effects", icon: "\uE9E9", subtitle: "Equalizer bands, dynamics, pitch and presets", index: 3 },
+        devices:     { title: "Devices", icon: "\uE7F5", subtitle: "Your microphone, where your voice is sent, and your headphones", index: 4 },
+        performance: { title: "Performance", icon: "\uEC4A", subtitle: "Hardware, processing backend and live measurements", index: 5 },
+        advanced:    { title: "Advanced", icon: "\uE9F5", subtitle: "Buffers, recovery, logging and diagnostics", index: 6 },
+        settings:    { title: "Settings", icon: "\uE713", subtitle: "General options, privacy and help", index: 7 }
+    })
+    readonly property var navKeys: backend.advancedUi
+        ? ["home", "sound", "noise", "effects", "devices", "performance", "advanced", "settings"]
+        : ["home", "sound", "devices", "settings"]
+    property string currentKey: "home"
+    // Falls back to Home if the current page disappears (e.g. advanced controls turned off).
+    readonly property var currentInfo: allPages[navKeys.indexOf(currentKey) >= 0 ? currentKey : "home"]
 
     RowLayout {
         anchors.fill: parent
@@ -66,14 +74,13 @@ ApplicationWindow {
                 }
 
                 Repeater {
-                    model: window.pages
+                    model: window.navKeys
                     NavButton {
-                        required property var modelData
-                        required property int index
-                        text: modelData.title
-                        icon: modelData.icon
-                        active: window.currentPage === index
-                        onClicked: window.currentPage = index
+                        required property string modelData
+                        text: window.allPages[modelData].title
+                        icon: window.allPages[modelData].icon
+                        active: window.currentInfo === window.allPages[modelData]
+                        onClicked: window.currentKey = modelData
                     }
                 }
 
@@ -172,13 +179,13 @@ ApplicationWindow {
                     spacing: 2
                     Layout.fillWidth: true
                     Text {
-                        text: window.pages[window.currentPage].title
+                        text: window.currentInfo.title
                         color: Theme.text
                         font.pixelSize: 24
                         font.weight: Font.Bold
                     }
                     Text {
-                        text: window.pages[window.currentPage].subtitle
+                        text: window.currentInfo.subtitle
                         color: Theme.textSecondary
                         font.pixelSize: 13
                     }
@@ -213,8 +220,12 @@ ApplicationWindow {
                     color: Theme.warning
                     font.pixelSize: 12
                     text: {
-                        if (backend.engineState === "Error" || backend.engineState === "Recovering" ||
-                                backend.engineState === "Running (no output)")
+                        if (backend.engineState === "Error" || backend.engineState === "Recovering")
+                            return backend.engineMessage
+                        // On Home (simple mode) the setup checklist already explains routing problems.
+                        if (!backend.advancedUi && window.currentInfo === window.allPages.home)
+                            return ""
+                        if (backend.engineState === "Running (no output)")
                             return backend.engineMessage
                         return backend.routingWarning
                     }
@@ -224,14 +235,16 @@ ApplicationWindow {
             StackLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                currentIndex: window.currentPage
+                currentIndex: window.currentInfo.index
 
-                DashboardScreen {}
-                NoiseReductionScreen {}
-                VoiceEffectsScreen {}
-                DevicesScreen {}
-                PerformanceScreen {}
-                AdvancedScreen {}
+                HomeScreen {}            // 0
+                SoundScreen {}           // 1
+                NoiseReductionScreen {}  // 2
+                VoiceEffectsScreen {}    // 3
+                DevicesScreen {}         // 4
+                PerformanceScreen {}     // 5
+                AdvancedScreen {}        // 6
+                SettingsScreen {}        // 7
             }
         }
     }

@@ -19,9 +19,12 @@ TEST(SettingsStore, JsonRoundTrip) {
     s.effectOrder = {EffectSlot::Compressor, EffectSlot::Equalizer, EffectSlot::Pitch};
     s.activePreset = "Gaming";
     s.customPresets["Mine"] = {{"bassDb", 2.0f}, {"trebleDb", -1.0f}};
+    s.advancedUi = true;
 
     AppSettings loaded;
     ASSERT_TRUE(SettingsStore::fromJson(SettingsStore::toJson(s), loaded));
+    EXPECT_TRUE(loaded.advancedUi);
+    EXPECT_FALSE(AppSettings{}.advancedUi); // simple UI is the default
     EXPECT_EQ(loaded.engine.inputDeviceId, s.engine.inputDeviceId);
     EXPECT_FALSE(loaded.engine.inputFollowDefault);
     EXPECT_EQ(loaded.engine.outputDeviceId, s.engine.outputDeviceId);

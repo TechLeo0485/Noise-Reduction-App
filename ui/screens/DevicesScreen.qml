@@ -28,7 +28,7 @@ ScreenPage {
         leftContent: [
             Card {
                 title: "Microphone"
-                subtitle: "Your physical microphone (USB, headset, built-in, audio interface or Bluetooth)"
+                subtitle: "The microphone you speak into (USB, headset, built-in or Bluetooth). Not a virtual device."
                 icon: ""
                 VsSwitch {
                     label: "Follow Windows default microphone"
@@ -40,11 +40,13 @@ ScreenPage {
                     Layout.fillWidth: true
                     enabled: !backend.inputFollowDefault
                     model: backend.inputDevices
+                    textRole: "label"
                     currentId: backend.inputDeviceId
                     placeholder: backend.inputFollowDefault ? "Windows default" : "Select a microphone"
                     onPicked: (id) => backend.selectInputDevice(id)
                 }
                 StatRow {
+                    visible: backend.advancedUi
                     label: "Device format"
                     value: backend.streamInfo.capture && backend.streamInfo.capture.running
                            ? backend.streamInfo.capture.format : page.formatOf(backend.inputDevices, backend.inputDeviceId)
@@ -53,13 +55,13 @@ ScreenPage {
                 StatRow {
                     label: "Resampled to 48 kHz"
                     value: backend.streamInfo.captureResampling ? "Yes" : "No (native 48 kHz)"
-                    visible: backend.streamInfo.capture !== undefined && backend.streamInfo.capture.running
+                    visible: backend.advancedUi && backend.streamInfo.capture !== undefined && backend.streamInfo.capture.running
                 }
             },
 
             Card {
-                title: "Monitoring (hear yourself)"
-                subtitle: "Plays the processed voice to your headphones. Do not monitor through speakers: the microphone will pick it up and feed back."
+                title: "Headphones (hear yourself)"
+                subtitle: "Hear your cleaned voice. Use headphones: through speakers your microphone picks it up again and echoes."
                 icon: ""
                 VsSwitch {
                     label: "Listen live"
@@ -70,6 +72,7 @@ ScreenPage {
                 VsComboBox {
                     Layout.fillWidth: true
                     model: backend.outputDevices
+                    textRole: "label"
                     currentId: backend.monitorDeviceId
                     placeholder: "Windows default output"
                     onPicked: (id) => backend.selectMonitorDevice(id)
@@ -88,17 +91,19 @@ ScreenPage {
 
         rightContent: [
             Card {
-                title: "Processed output (virtual microphone)"
-                subtitle: "VoiceStudio plays processed audio into \"CABLE Input\". In Discord, Zoom or Teams, choose \"CABLE Output\" as the microphone."
+                title: "Send my voice to apps"
+                subtitle: "Choose \"CABLE Input\" here. Then, in Discord, Zoom, Teams or your game, choose \"CABLE Output\" as the microphone."
                 icon: ""
                 VsComboBox {
                     Layout.fillWidth: true
                     model: backend.outputDevices
+                    textRole: "label"
                     currentId: backend.outputDeviceId
                     placeholder: "Select output (normally CABLE Input)"
                     onPicked: (id) => backend.selectOutputDevice(id)
                 }
                 StatRow {
+                    visible: backend.advancedUi
                     label: "Device format"
                     value: backend.streamInfo.output && backend.streamInfo.output.running
                            ? backend.streamInfo.output.format : page.formatOf(backend.outputDevices, backend.outputDeviceId)
@@ -121,6 +126,7 @@ ScreenPage {
             },
 
             Card {
+                visible: backend.advancedUi
                 title: "Active streams"
                 subtitle: "What Windows actually negotiated for each endpoint"
                 icon: ""
@@ -152,6 +158,7 @@ ScreenPage {
     }
 
     Card {
+        visible: !backend.cableDetected || backend.advancedUi
         title: "Virtual cable setup (VB-CABLE)"
         icon: ""
         Text {

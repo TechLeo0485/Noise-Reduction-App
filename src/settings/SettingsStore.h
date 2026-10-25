@@ -25,6 +25,7 @@ struct AppSettings {
     std::map<std::string, std::map<std::string, float>> customPresets;
     LogLevel logLevel = LogLevel::Info;
     bool engineEnabled = true;
+    bool advancedUi = false; // simple UI by default; technical screens are opt-in
 
     AppSettings();
     void captureParams(const EngineParameters& source);

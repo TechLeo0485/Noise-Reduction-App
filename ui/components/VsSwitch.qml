@@ -38,7 +38,12 @@ RowLayout {
     Switch {
         id: control
         checked: root.checked
-        onToggled: root.toggled(checked)
+        onToggled: {
+            root.toggled(checked)
+            // Clicking breaks the binding; restore it so the switch always shows the backend's
+            // real state, even when the backend declines or adjusts the change.
+            checked = Qt.binding(() => root.checked)
+        }
         padding: 0
         // Basic-style Switch excludes the indicator from its implicit size, which made layouts
         // give it zero width and clip it at the card edge. Reserve the indicator's space.

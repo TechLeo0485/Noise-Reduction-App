@@ -81,6 +81,11 @@ class EngineController : public QObject {
     Q_PROPERTY(QVariantMap cableTest READ cableTest NOTIFY cableTestChanged)
     Q_PROPERTY(QVariantMap voiceCheck READ voiceCheck NOTIFY voiceCheckChanged)
 
+    // Simple-mode support
+    Q_PROPERTY(bool advancedUi READ advancedUi WRITE setAdvancedUi NOTIFY configChanged)
+    Q_PROPERTY(QVariantMap setup READ setup NOTIFY setupChanged)
+    Q_PROPERTY(int noiseLevel READ noiseLevel NOTIFY paramsChanged)
+
 public:
     explicit EngineController(QObject* parent = nullptr);
     ~EngineController() override;
@@ -145,6 +150,11 @@ public:
     [[nodiscard]] QVariantMap hardware() const { return hardware_; }
     [[nodiscard]] QVariantMap cableTest() const { return cableTest_; }
     [[nodiscard]] QVariantMap voiceCheck() const { return voiceCheck_; }
+    [[nodiscard]] bool advancedUi() const { return settings_.advancedUi; }
+    void setAdvancedUi(bool enabled);
+    [[nodiscard]] QVariantMap setup() const { return setup_; }
+    // 0 = Off, 1 = Light, 2 = Balanced, 3 = Strong, -1 = custom (fine-tuned in advanced controls)
+    [[nodiscard]] int noiseLevel() const;
 
     Q_INVOKABLE void setParam(const QString& key, const QVariant& value);
     Q_INVOKABLE void refreshDevices();
@@ -161,6 +171,10 @@ public:
     Q_INVOKABLE void runVirtualCableTest();
     // Records `seconds` of the processed voice, then plays it back on the monitor device
     // (or the Windows default output). In memory only; nothing is saved.
+    Q_INVOKABLE void setNoiseLevel(int level);
+    // One-click fixes offered by the setup checklist.
+    Q_INVOKABLE void fixMicrophone();
+    Q_INVOKABLE void fixOutput();
     Q_INVOKABLE void startVoiceCheck(double seconds = 5.0);
     Q_INVOKABLE void stopVoiceCheck();
     Q_INVOKABLE void resetStatistics();
@@ -178,6 +192,7 @@ signals:
     void statsChanged();
     void cableTestChanged();
     void voiceCheckChanged();
+    void setupChanged();
 
 private:
     void onDeviceEvent(const DeviceEvent& event);
@@ -191,6 +206,10 @@ private:
     void updateRoutingWarning();
     void autoSelectCableOutput();
     void pollVoiceCheck();
+    void refreshSetup();
+    [[nodiscard]] const AudioDeviceInfo* findDevice(const std::vector<AudioDeviceInfo>& list, const std::wstring& id) const;
+    [[nodiscard]] const AudioDeviceInfo* suggestedMicrophone() const;
+    [[nodiscard]] const AudioDeviceInfo* suggestedOutput() const;
     void startVoicePlayback(std::vector<float> recording);
     void setVoiceCheck(const QString& state, const QString& message, double progress = 0.0);
     [[nodiscard]] QVariantMap buildHardwareMap() const;
@@ -219,6 +238,8 @@ private:
     QVariantMap hardware_;
     QVariantMap cableTest_;
     QVariantMap voiceCheck_;
+    QVariantMap setup_;
+    bool micHeard_ = false; // a voice-level signal was seen on the current microphone
     std::thread playbackThread_;
     std::atomic<bool> playbackCancel_{false};
 

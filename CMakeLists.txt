@@ -96,6 +96,10 @@ if(VOICESTUDIO_BUILD_APP)
         src/app/EngineController.h
         src/app/CrashHandler.cpp)
 
+    # QML files live in ui/ subdirectories; let Qt generate a qmldir for each (Qt 6.8+ policy).
+    if(QT_KNOWN_POLICY_QTP0004)
+        qt_policy(SET QTP0004 NEW)
+    endif()
     set_source_files_properties(ui/themes/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
     qt_add_qml_module(VoiceStudio
         URI VoiceStudio
@@ -104,9 +108,11 @@ if(VOICESTUDIO_BUILD_APP)
             ui/Main.qml
             ui/themes/Theme.qml
             ui/components/Card.qml
+            ui/components/ChecklistItem.qml
             ui/components/LevelMeter.qml
             ui/components/ModeTile.qml
             ui/components/NavButton.qml
+            ui/components/NoiseLevelPicker.qml
             ui/components/ParamSlider.qml
             ui/components/ParamSwitch.qml
             ui/components/ProgressBarThin.qml
@@ -117,7 +123,9 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/VsComboBox.qml
             ui/components/VsSlider.qml
             ui/components/VsSwitch.qml
-            ui/screens/DashboardScreen.qml
+            ui/screens/HomeScreen.qml
+            ui/screens/SoundScreen.qml
+            ui/screens/SettingsScreen.qml
             ui/screens/NoiseReductionScreen.qml
             ui/screens/VoiceEffectsScreen.qml
             ui/screens/DevicesScreen.qml

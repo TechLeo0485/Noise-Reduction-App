@@ -128,11 +128,27 @@ EngineController::~EngineController() {
 // ---- Devices ----------------------------------------------------------------------------
 
 QVariantList EngineController::toVariantList(const std::vector<AudioDeviceInfo>& devices) {
-    QVariantList list;
+    // Real devices first, virtual ones (cables, Voicemod, ...) after, so the obvious choice is on top.
+    std::vector<const AudioDeviceInfo*> ordered;
     for (const AudioDeviceInfo& d : devices) {
+        ordered.push_back(&d);
+    }
+    std::stable_partition(ordered.begin(), ordered.end(), [](const AudioDeviceInfo* d) { return !d->isVirtualCable; });
+
+    QVariantList list;
+    for (const AudioDeviceInfo* dp : ordered) {
+        const AudioDeviceInfo& d = *dp;
         QVariantMap m;
         m["id"] = qs(d.id);
         m["name"] = qs(d.name);
+        QString label = qs(d.name);
+        if (d.isVirtualCable) {
+            label += QStringLiteral("  -  virtual");
+        }
+        if (d.isDefault) {
+            label += QStringLiteral("  -  Windows default");
+        }
+        m["label"] = label;
         m["isDefault"] = d.isDefault;
         m["isVirtualCable"] = d.isVirtualCable;
         m["format"] = d.formatSupported ? qs(d.mixFormat.describe()) : QStringLiteral("Unsupported format");
@@ -153,6 +169,155 @@ void EngineController::refreshDevices() {
     cableDetected_ = std::any_of(outputDeviceInfos_.begin(), outputDeviceInfos_.end(),
                                  [](const AudioDeviceInfo& d) { return d.isVirtualCable; });
     emit devicesChanged();
+    refreshSetup();
+}
+
+// ---- Simple mode: setup checklist, one-click fixes, noise levels ----------------------------
+
+const AudioDeviceInfo* EngineController::findDevice(const std::vector<AudioDeviceInfo>& list, const std::wstring& id) const {
+    for (const AudioDeviceInfo& d : list) {
+        if (d.id == id) {
+            return &d;
+        }
+    }
+    return nullptr;
+}
+
+const AudioDeviceInfo* EngineController::suggestedMicrophone() const {
+    // Prefer the Windows default if it is a real microphone, otherwise the first real one.
+    const AudioDeviceInfo* first = nullptr;
+    for (const AudioDeviceInfo& d : inputDeviceInfos_) {
+        if (!d.isVirtualCable) {
+            if (d.isDefault) {
+                return &d;
+            }
+            if (first == nullptr) {
+                first = &d;
+            }
+        }
+    }
+    return first;
+}
+
+const AudioDeviceInfo* EngineController::suggestedOutput() const {
+    for (const AudioDeviceInfo& d : outputDeviceInfos_) {
+        if (d.isVirtualCable && containsCi(d.name, L"cable input")) {
+            return &d;
+        }
+    }
+    return nullptr;
+}
+
+void EngineController::refreshSetup() {
+    const EngineRuntimeInfo& info = status_.info;
+    const AudioDeviceInfo* mic = findDevice(inputDeviceInfos_, info.inputDeviceId);
+    const AudioDeviceInfo* out = findDevice(outputDeviceInfos_, info.outputDeviceId);
+    const AudioDeviceInfo* suggestedMic = suggestedMicrophone();
+    const AudioDeviceInfo* suggestedOut = suggestedOutput();
+
+    const bool micActive = info.captureRunning;
+    const bool micIsVirtual = mic != nullptr && mic->isVirtualCable;
+    const bool outputIsCable = info.outputRunning && out != nullptr && out->isVirtualCable;
+
+    QVariantMap s;
+    s["engineOn"] = settings_.engineEnabled;
+    s["micActive"] = micActive;
+    s["micName"] = micActive ? qs(info.inputName) : QString();
+    s["micIsVirtual"] = micIsVirtual;
+    s["micOk"] = micActive && !micIsVirtual;
+    s["suggestedMicName"] = suggestedMic ? qs(suggestedMic->name) : QString();
+    s["hasPhysicalMic"] = suggestedMic != nullptr;
+    s["cableInstalled"] = cableDetected_;
+    s["outputName"] = info.outputRunning ? qs(info.outputName) : QString();
+    s["outputOk"] = outputIsCable;
+    s["canFixOutput"] = suggestedOut != nullptr;
+    s["heard"] = micHeard_;
+    s["allOk"] = micActive && !micIsVirtual && outputIsCable && cableDetected_;
+    if (s != setup_) {
+        setup_ = s;
+        emit setupChanged();
+    }
+}
+
+void EngineController::fixMicrophone() {
+    if (const AudioDeviceInfo* mic = suggestedMicrophone()) {
+        settings_.engine.inputDeviceId = mic->id;
+        settings_.engine.inputFollowDefault = false;
+        micHeard_ = false;
+        logInfo("Setup: microphone set to " + toUtf8(mic->name));
+        pushConfig();
+    }
+}
+
+void EngineController::fixOutput() {
+    if (const AudioDeviceInfo* out = suggestedOutput()) {
+        settings_.engine.outputDeviceId = out->id;
+        settings_.engine.outputFollowDefault = false;
+        logInfo("Setup: processed output set to " + toUtf8(out->name));
+        pushConfig();
+    }
+}
+
+namespace {
+struct NoiseLevelPreset {
+    bool suppression;
+    float strength;
+    bool gate;
+    float gateRangeDb;
+    float gateRatio;
+};
+// Balanced equals the engine defaults, so a fresh install shows "Balanced".
+constexpr NoiseLevelPreset kNoiseLevels[] = {
+    {false, 100.f, false, 30.f, 4.f}, // Off
+    {true, 85.f, true, 15.f, 2.f},    // Light
+    {true, 100.f, true, 30.f, 4.f},   // Balanced
+    {true, 100.f, true, 50.f, 8.f},   // Strong
+};
+} // namespace
+
+int EngineController::noiseLevel() const {
+    const bool suppression = params_.getBool(ParamId::SuppressionEnabled);
+    const bool gate = params_.getBool(ParamId::GateEnabled);
+    if (!suppression && !gate) {
+        return 0;
+    }
+    for (int i = 1; i < 4; ++i) {
+        const NoiseLevelPreset& l = kNoiseLevels[i];
+        if (suppression == l.suppression && gate == l.gate &&
+            std::fabs(params_.get(ParamId::SuppressionStrength) - l.strength) < 0.5f &&
+            std::fabs(params_.get(ParamId::GateRangeDb) - l.gateRangeDb) < 0.5f &&
+            std::fabs(params_.get(ParamId::GateRatio) - l.gateRatio) < 0.05f) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void EngineController::setNoiseLevel(int level) {
+    if (level < 0 || level > 3) {
+        return;
+    }
+    const NoiseLevelPreset& l = kNoiseLevels[level];
+    params_.set(ParamId::SuppressionEnabled, l.suppression ? 1.0f : 0.0f);
+    params_.set(ParamId::SuppressionMode, rnnoiseAvailable() ? 1.0f : 0.0f);
+    params_.set(ParamId::SuppressionStrength, l.strength);
+    params_.set(ParamId::GateEnabled, l.gate ? 1.0f : 0.0f);
+    params_.set(ParamId::GateRangeDb, l.gateRangeDb);
+    params_.set(ParamId::GateRatio, l.gateRatio);
+    if (!presetModified_) {
+        presetModified_ = true;
+        emit presetsChanged();
+    }
+    emit paramsChanged();
+    scheduleSave();
+}
+
+void EngineController::setAdvancedUi(bool enabled) {
+    if (settings_.advancedUi != enabled) {
+        settings_.advancedUi = enabled;
+        emit configChanged();
+        scheduleSave();
+    }
 }
 
 void EngineController::autoSelectCableOutput() {
@@ -198,6 +363,13 @@ void EngineController::selectInputDevice(const QString& id) {
 }
 
 void EngineController::setInputFollowDefault(bool follow) {
+    if (!follow && settings_.engine.inputDeviceId.empty()) {
+        // Turning "follow default" off pins the device currently in use, so the switch, the
+        // device list and the engine all agree (previously the request was silently ignored).
+        settings_.engine.inputDeviceId = !status_.info.inputDeviceId.empty()
+                                             ? status_.info.inputDeviceId
+                                             : deviceManager_->defaultDeviceId(DeviceFlow::Capture);
+    }
     settings_.engine.inputFollowDefault = follow || settings_.engine.inputDeviceId.empty();
     pushConfig();
 }
@@ -230,6 +402,16 @@ void EngineController::updateRoutingWarning() {
                           .arg(qs(d.name));
         }
     }
+    if (warning.isEmpty() && !settings_.engine.outputDeviceId.empty()) {
+        for (const AudioDeviceInfo& d : outputDeviceInfos_) {
+            if (d.id == settings_.engine.outputDeviceId && !d.isVirtualCable) {
+                warning = QStringLiteral("Processed output is set to \"%1\", a real speaker or headphone. Other apps will "
+                                         "not receive your voice. Select \"CABLE Input\" as the processed output and use "
+                                         "\"Listen live\" to hear yourself.")
+                              .arg(qs(d.name));
+            }
+        }
+    }
     if (warning.isEmpty() && settings_.engine.outputDeviceId.empty() && !settings_.engine.outputFollowDefault) {
         warning = cableDetected_ ? QStringLiteral("Select \"CABLE Input\" as the processed output so other apps can use "
                                                   "\"CABLE Output\" as their microphone.")
@@ -248,6 +430,7 @@ void EngineController::pushConfig() {
     supervisor_->applyConfig(settings_.engine);
     updateRoutingWarning();
     emit configChanged();
+    refreshSetup();
     scheduleSave();
 }
 
@@ -255,6 +438,7 @@ void EngineController::setEngineEnabled(bool enabled) {
     settings_.engineEnabled = enabled;
     supervisor_->setEnabled(enabled);
     emit configChanged();
+    refreshSetup();
     scheduleSave();
 }
 
@@ -353,6 +537,7 @@ void EngineController::resetToDefaults() {
     emit paramsChanged();
     emit presetsChanged();
     pushConfig();
+    refreshSetup();
 }
 
 // ---- Parameters & presets ----------------------------------------------------------------
@@ -491,7 +676,12 @@ bool EngineController::advancedAiAvailable() const {
 // ---- Status, meters, statistics -----------------------------------------------------------
 
 void EngineController::onStatusFromSupervisor() {
+    const std::wstring previousInput = status_.info.inputDeviceId;
     status_ = supervisor_->status();
+    if (status_.info.inputDeviceId != previousInput) {
+        micHeard_ = false; // a different microphone has to prove itself again
+    }
+    refreshSetup();
     if (status_.state == EngineState::Running || status_.state == EngineState::Degraded) {
         statsCollector_.clear();
     }
@@ -533,6 +723,12 @@ void EngineController::updateMeters() {
         suppressorKindName(static_cast<SuppressorKind>(m.activeSuppressor.load(std::memory_order_relaxed))));
     emit metersChanged();
     pollVoiceCheck();
+
+    // "We can hear you": a speech-level peak on the current microphone (about -45 dBFS or louder).
+    if (!micHeard_ && running && inputLevelDb_ > -45.0) {
+        micHeard_ = true;
+        refreshSetup();
+    }
 }
 
 // ---- Voice check ------------------------------------------------------------------------------

@@ -40,6 +40,12 @@ if (-not $env:QTDIR -or -not (Test-Path (Join-Path $env:QTDIR "lib\cmake\Qt6\Qt6
 }
 Write-Host "Using Qt: $env:QTDIR"
 
+# A running VoiceStudio.exe is locked by Windows and makes the link step fail (LNK1104).
+$running = Get-Process VoiceStudio -ErrorAction SilentlyContinue
+if ($running) {
+    throw "VoiceStudio is running (PID $($running.Id -join ', ')). Close it, then run the build again."
+}
+
 if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) { throw "Visual Studio 2022 not found (vswhere.exe missing)." }
