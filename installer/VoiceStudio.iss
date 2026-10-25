@@ -152,6 +152,38 @@ begin
 #endif
 end;
 
+// ---- Closing the running app ----------------------------------------------------------------------------------
+// Files in use cannot be replaced or deleted. "VoiceStudio.exe --quit" asks the running VoiceStudio (often hidden in
+// the notification area, where Windows' "close applications" only hides it) to quit and save its settings, and waits
+// for it. Versions without --quit, or a hung app, are then ended - only the copy in this folder, never other copies.
+procedure CloseVoiceStudio(const AppDir: String);
+var
+  Code: Integer;
+begin
+  if not FileExists(AddBackslash(AppDir) + 'VoiceStudio.exe') then
+    exit;
+  Exec(AddBackslash(AppDir) + 'VoiceStudio.exe', '--quit', AppDir, SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+       '-NoProfile -NonInteractive -Command "Get-Process VoiceStudio -ErrorAction SilentlyContinue | ' +
+       'Where-Object { $_.Path -eq ''' + AddBackslash(AppDir) + 'VoiceStudio.exe'' } | Stop-Process -Force"',
+       '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Sleep(500); // let Windows release the files
+end;
+
+// Updating: close the installed copy before its files are replaced.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  CloseVoiceStudio(ExpandConstant('{app}'));
+  Result := '';
+end;
+
+// Uninstalling: close it first, or its files (and the folder) would stay behind.
+function InitializeUninstall(): Boolean;
+begin
+  CloseVoiceStudio(ExpandConstant('{app}'));
+  Result := True;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if (CurStep = ssPostInstall) and not WizardSilent and not HasVBCable and not VirtualMicSelected then
@@ -192,8 +224,15 @@ begin
     end;
   end;
   if CurUninstallStep = usPostUninstall then
+  begin
+    // Whatever is left in the program folder (files created after setup, e.g. Qt caches) goes too. Only a folder
+    // named VoiceStudio is removed, so a custom install location like "C:\Tools" is never wiped.
+    if DirExists(ExpandConstant('{app}')) and
+       (CompareText(ExtractFileName(RemoveBackslashUnlessRoot(ExpandConstant('{app}'))), 'VoiceStudio') = 0) then
+      DelTree(ExpandConstant('{app}'), True, True, True);
     // Silent uninstalls (/SUPPRESSMSGBOXES) keep the user's data: the default answer is No.
     if SuppressibleMsgBox('Also delete your VoiceStudio settings, logs and saved voice sample?', mbConfirmation, MB_YESNO,
                           IDNO) = IDYES then
       DelTree(ExpandConstant('{localappdata}\VoiceStudio'), True, True, True);
+  end;
 end;

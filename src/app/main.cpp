@@ -16,12 +16,41 @@
 #endif
 #include <windows.h>
 
+#include <cstring>
+
 namespace {
 constexpr const wchar_t* kInstanceMutex = L"Local\\VoiceStudio.SingleInstance";
 constexpr const wchar_t* kActivateEvent = L"Local\\VoiceStudio.Activate"; // "show your window" from a second launch
+constexpr const wchar_t* kQuitEvent = L"Local\\VoiceStudio.Quit";         // "quit" from VoiceStudio.exe --quit (setup)
+
+// VoiceStudio.exe --quit: asks the running VoiceStudio to quit (settings are saved as on "Quit" in the tray menu)
+// and waits up to 15 s for it to end. Used by setup and uninstall, which cannot replace or delete files in use.
+// Exit code 0: not running (any more); 1: still running.
+int quitRunningInstance() {
+    HANDLE running = OpenMutexW(SYNCHRONIZE, FALSE, kInstanceMutex);
+    if (running == nullptr) {
+        return 0;
+    }
+    if (HANDLE quit = OpenEventW(EVENT_MODIFY_STATE, FALSE, kQuitEvent); quit != nullptr) {
+        SetEvent(quit);
+        CloseHandle(quit);
+    }
+    // The instance holds the mutex until it exits (released at the end of main, or abandoned if it is killed).
+    const DWORD wait = WaitForSingleObject(running, 15000);
+    if (wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED) {
+        ReleaseMutex(running);
+    }
+    CloseHandle(running);
+    return wait == WAIT_TIMEOUT ? 1 : 0;
+}
 } // namespace
 
 int main(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--quit") == 0) {
+            return quitRunningInstance();
+        }
+    }
     vs::installCrashHandler(vs::appDataDirectory() / L"crashdumps");
 
     // Single instance: two engines fighting over the same endpoints helps nobody. A second launch (start
@@ -40,6 +69,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     HANDLE activateEvent = CreateEventW(nullptr, FALSE, FALSE, kActivateEvent);
+    HANDLE quitEvent = CreateEventW(nullptr, FALSE, FALSE, kQuitEvent);
 
     // QApplication rather than QGuiApplication: the notification-area icon uses Qt Widgets.
     QApplication app(argc, argv);
@@ -77,12 +107,17 @@ int main(int argc, char* argv[]) {
             }
             QWinEventNotifier activation(activateEvent);
             QObject::connect(&activation, &QWinEventNotifier::activated, &tray, [&tray] { tray.showWindow(); });
+            QWinEventNotifier quitRequest(quitEvent);
+            QObject::connect(&quitRequest, &QWinEventNotifier::activated, &app, [] { QCoreApplication::quit(); });
             exitCode = QApplication::exec();
         }
     }
 
     if (activateEvent != nullptr) {
         CloseHandle(activateEvent);
+    }
+    if (quitEvent != nullptr) {
+        CloseHandle(quitEvent);
     }
     if (instanceMutex != nullptr) {
         ReleaseMutex(instanceMutex);
