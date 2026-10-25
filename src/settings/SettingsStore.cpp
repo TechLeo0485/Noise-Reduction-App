@@ -100,6 +100,11 @@ QByteArray SettingsStore::toJson(const AppSettings& s) {
     root["logLevel"] = static_cast<int>(s.logLevel);
     root["advancedUi"] = s.advancedUi;
     root["closeToTray"] = s.closeToTray;
+    QJsonArray virtualIds;
+    for (const std::wstring& id : s.virtualDeviceIds) {
+        virtualIds.append(wide(id));
+    }
+    root["virtualDeviceIds"] = virtualIds;
 
     QJsonObject custom;
     for (const auto& [name, values] : s.customPresets) {
@@ -177,6 +182,12 @@ bool SettingsStore::fromJson(const QByteArray& json, AppSettings& out, QString* 
     s.logLevel = static_cast<LogLevel>(std::clamp(root.value("logLevel").toInt(1), 0, 4));
     s.advancedUi = root.value("advancedUi").toBool(false);
     s.closeToTray = root.value("closeToTray").toBool(true);
+    for (const QJsonValue& v : root.value("virtualDeviceIds").toArray()) {
+        const QString id = v.toString();
+        if (!id.isEmpty() && s.virtualDeviceIds.size() < 64) {
+            s.virtualDeviceIds.push_back(id.toStdWString());
+        }
+    }
 
     const QJsonObject custom = root.value("customPresets").toObject();
     for (auto it = custom.begin(); it != custom.end(); ++it) {

@@ -2,8 +2,12 @@ import QtQuick
 import QtQuick.Layouts
 import VoiceStudio
 
+// Everyday page: is everything working, how do I sound, the two choices people change most
+// (voice character and noise removal) and a quick listen. Details live on the other pages.
 ScreenPage {
     id: page
+
+    signal openPage(string key)
 
     readonly property var su: backend.setup
     readonly property bool allOk: su.allOk === true
@@ -56,8 +60,8 @@ ScreenPage {
                     font.pixelSize: 13
                     textFormat: Text.StyledText
                     text: !backend.engineEnabled ? "Turn on <b>Audio engine</b> at the top right to start."
-                          : page.allOk ? "Your voice is cleaned and sent to other apps. In Discord, Zoom, Teams or your game, "
-                                         + "choose the microphone <b>CABLE Output</b>."
+                          : page.allOk ? "Your voice is sent to <b>" + page.su.outputName + "</b>. In Discord, Zoom, Teams or "
+                                         + "your game, pick the virtual microphone as your microphone (for VB-CABLE: <b>CABLE Output</b>)."
                           : "Follow the steps below. It takes less than a minute."
                 }
             }
@@ -71,9 +75,10 @@ ScreenPage {
         }
     }
 
-    // ---- Setup checklist --------------------------------------------------------------------
+    // ---- Setup checklist (only while something is missing) ------------------------------------
     Card {
-        title: page.allOk ? "Setup complete" : "Setup checklist"
+        visible: !page.allOk && backend.engineEnabled
+        title: "Setup checklist"
         icon: ""
 
         ChecklistItem {
@@ -92,21 +97,20 @@ ScreenPage {
 
         ChecklistItem {
             status: page.su.cableInstalled ? "ok" : "problem"
-            title: page.su.cableInstalled ? "Virtual cable installed (VB-CABLE)" : "Virtual cable is not installed"
-            detail: page.su.cableInstalled ? "This is how other apps receive your cleaned voice."
-                    : "Run the VoiceStudio setup again with \"Install VB-CABLE\" ticked, then restart your PC. "
-                      + "Or download it yourself (free)."
-            actionText: page.su.cableInstalled ? "" : "Download"
-            onActionClicked: Qt.openUrlExternally("https://vb-audio.com/Cable/")
+            title: page.su.cableInstalled ? "Virtual microphone found" : "No virtual microphone found"
+            detail: page.su.cableInstalled ? "This is how other apps receive your voice."
+                    : "Install VB-CABLE (free) and restart your PC, or mark your own virtual microphone in Setup."
+            actionText: page.su.cableInstalled ? "" : "Open Setup"
+            onActionClicked: page.openPage("setup")
         }
 
         ChecklistItem {
             status: !page.su.cableInstalled ? "pending" : page.su.outputOk ? "ok" : "problem"
-            title: page.su.outputOk ? "Sending your voice to the virtual cable"
+            title: page.su.outputOk ? "Sending your voice to the virtual microphone"
                    : page.su.outputName !== "" ? "Your voice is going to \"" + page.su.outputName + "\""
-                   : "Your cleaned voice is not being sent anywhere"
-            detail: page.su.outputOk ? "In your call app, choose the microphone \"CABLE Output\"."
-                    : page.su.outputName !== "" ? "That is a speaker, so other apps cannot hear you. Send it to the virtual cable instead."
+                   : "Your voice is not being sent anywhere"
+            detail: page.su.outputOk ? "In your call app, pick the virtual microphone as your microphone."
+                    : page.su.outputName !== "" ? "That is a speaker, so other apps cannot hear you. Send it to the virtual microphone instead."
                     : "Other apps cannot hear you yet."
             actionText: !page.su.outputOk && page.su.canFixOutput ? "Fix it" : ""
             onActionClicked: backend.fixOutput()
@@ -149,10 +153,19 @@ ScreenPage {
             },
 
             Card {
-                title: "Noise removal"
-                subtitle: "Cleans up background noise around you"
-                icon: ""
-                NoiseLevelPicker {}
+                title: "Voice character"
+                subtitle: "How your voice sounds to others"
+                icon: ""
+                ChipRow {
+                    model: backend.voiceLooks
+                    current: backend.voiceLook
+                    onPicked: (key) => backend.applyVoiceLook(key)
+                }
+                LinkText {
+                    text: backend.voiceLook === "" ? "Custom character - adjust it on the Voice page"
+                                                   : "Fine-tune depth, body and tone on the Voice page"
+                    onClicked: page.openPage("voice")
+                }
             }
         ]
 
@@ -189,59 +202,28 @@ ScreenPage {
                 }
                 VsSwitch {
                     label: "Listen live"
-                    description: "Hear your cleaned voice in your headphones while you talk"
+                    description: "Hear yourself in your headphones while you talk"
                     checked: backend.monitorEnabled
                     onToggled: (value) => backend.monitorEnabled = value
                 }
             },
 
             Card {
-                title: "Voice style"
-                subtitle: "Ready-made settings for common situations"
-                icon: ""
-                Flow {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Repeater {
-                        model: backend.presets
-                        Rectangle {
-                            required property var modelData
-                            readonly property bool active: modelData.name === backend.activePreset && !backend.presetModified
-                            width: chip.implicitWidth + 28
-                            height: 34
-                            radius: 17
-                            color: active ? Theme.accent : (chipMouse.containsMouse ? Theme.surfaceHover : Theme.surfaceRaised)
-                            border.color: active ? Theme.accent : Theme.border
-                            Text {
-                                id: chip
-                                anchors.centerIn: parent
-                                text: modelData.name
-                                color: parent.active ? Theme.background : Theme.text
-                                font.pixelSize: 13
-                                font.weight: parent.active ? Font.DemiBold : Font.Normal
-                            }
-                            MouseArea {
-                                id: chipMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: backend.applyPreset(modelData.name)
-                            }
-                        }
-                    }
-                }
+                title: "Noise removal"
+                subtitle: "Cleans up background noise around you"
+                icon: ""
+                NoiseLevelPicker {}
                 Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Theme.textSecondary
+                    visible: backend.params.isolationEnabled === true
+                    text: "Only your voice is sent: strict voice isolation is on."
+                    color: Theme.success
                     font.pixelSize: 12
-                    text: {
-                        const list = backend.presets
-                        for (let i = 0; i < list.length; ++i)
-                            if (list[i].name === backend.activePreset)
-                                return (backend.presetModified ? "Based on " + list[i].name + " (adjusted). " : "") + list[i].description
-                        return ""
-                    }
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+                LinkText {
+                    text: "More clean-up options"
+                    onClicked: page.openPage("cleanup")
                 }
             }
         ]

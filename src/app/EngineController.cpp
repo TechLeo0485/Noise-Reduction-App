@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cwctype>
+#include <filesystem>
 
 namespace vs {
 
@@ -195,6 +196,12 @@ void EngineController::refreshDevices() {
     }
     inputDeviceInfos_ = deviceManager_->enumerate(DeviceFlow::Capture);
     outputDeviceInfos_ = deviceManager_->enumerate(DeviceFlow::Render);
+    // Devices the user marked as virtual (their own virtual microphone driver) count as cables everywhere.
+    for (auto* list : {&inputDeviceInfos_, &outputDeviceInfos_}) {
+        for (AudioDeviceInfo& d : *list) {
+            d.isVirtualCable = d.isVirtualCable || isUserVirtual(d.id);
+        }
+    }
 
     // VB-CABLE installs a second, 16-channel input ("CABLE In 16ch") that feeds the same
     // "CABLE Output". It is redundant for voice and confusing, so hide it when the normal
@@ -225,6 +232,13 @@ void EngineController::refreshDevices() {
     }
     inputDevices_ = toVariantList(inputDeviceInfos_);
     outputDevices_ = toVariantList(outputDeviceInfos_);
+    for (QVariantList* list : {&inputDevices_, &outputDevices_}) {
+        for (QVariant& v : *list) {
+            QVariantMap m = v.toMap();
+            m["userVirtual"] = isUserVirtual(m.value("id").toString().toStdWString());
+            v = m;
+        }
+    }
     cableDetected_ = std::any_of(outputDeviceInfos_.begin(), outputDeviceInfos_.end(),
                                  [](const AudioDeviceInfo& d) { return d.isVirtualCable; });
     emit devicesChanged();
@@ -263,12 +277,43 @@ const AudioDeviceInfo* EngineController::suggestedMicrophone() const {
 }
 
 const AudioDeviceInfo* EngineController::suggestedOutput() const {
+    // The virtual microphone's playback side: a device the user marked first, then VB-CABLE's
+    // "CABLE Input", then any other virtual playback device.
+    const AudioDeviceInfo* cable = nullptr;
+    const AudioDeviceInfo* other = nullptr;
     for (const AudioDeviceInfo& d : outputDeviceInfos_) {
-        if (d.isVirtualCable && containsCi(d.name, L"cable input")) {
+        if (isUserVirtual(d.id)) {
             return &d;
         }
+        if (d.isVirtualCable && cable == nullptr && containsCi(d.name, L"cable input")) {
+            cable = &d;
+        }
+        if (d.isVirtualCable && other == nullptr) {
+            other = &d;
+        }
     }
-    return nullptr;
+    return cable != nullptr ? cable : other;
+}
+
+bool EngineController::isUserVirtual(const std::wstring& id) const {
+    return std::find(settings_.virtualDeviceIds.begin(), settings_.virtualDeviceIds.end(), id) !=
+           settings_.virtualDeviceIds.end();
+}
+
+void EngineController::setDeviceVirtual(const QString& id, bool isVirtual) {
+    const std::wstring wid = id.toStdWString();
+    if (wid.empty() || isUserVirtual(wid) == isVirtual) {
+        return;
+    }
+    if (isVirtual) {
+        settings_.virtualDeviceIds.push_back(wid);
+    } else {
+        std::erase(settings_.virtualDeviceIds, wid);
+    }
+    logInfo(std::string("Device marked as ") + (isVirtual ? "a virtual microphone" : "a normal device"));
+    scheduleSave();
+    refreshDevices();
+    updateRoutingWarning();
 }
 
 void EngineController::refreshSetup() {
@@ -419,13 +464,10 @@ void EngineController::autoSelectCableOutput() {
     if (!settings_.engine.outputDeviceId.empty() || settings_.engine.outputFollowDefault) {
         return;
     }
-    for (const AudioDeviceInfo& d : outputDeviceInfos_) {
-        if (d.isVirtualCable && containsCi(d.name, L"cable input")) {
-            settings_.engine.outputDeviceId = d.id;
-            logInfo("Auto-selected virtual cable output: " + toUtf8(d.name));
-            scheduleSave();
-            return;
-        }
+    if (const AudioDeviceInfo* d = suggestedOutput()) {
+        settings_.engine.outputDeviceId = d->id;
+        logInfo("Auto-selected virtual microphone output: " + toUtf8(d->name));
+        scheduleSave();
     }
 }
 
@@ -500,18 +542,18 @@ void EngineController::updateRoutingWarning() {
     if (warning.isEmpty() && !settings_.engine.outputDeviceId.empty()) {
         for (const AudioDeviceInfo& d : outputDeviceInfos_) {
             if (d.id == settings_.engine.outputDeviceId && !d.isVirtualCable) {
-                warning = QStringLiteral("Processed output is set to \"%1\", a real speaker or headphone. Other apps will "
-                                         "not receive your voice. Select \"CABLE Input\" as the processed output and use "
-                                         "\"Listen live\" to hear yourself.")
+                warning = QStringLiteral("Your voice goes to \"%1\", a real speaker or headphone, so other apps will "
+                                         "not receive it. Send it to your virtual microphone (e.g. \"CABLE Input\") and use "
+                                         "\"Listen live\" to hear yourself. Using your own virtual mic? Mark it as virtual in Setup.")
                               .arg(qs(d.name));
             }
         }
     }
     if (warning.isEmpty() && settings_.engine.outputDeviceId.empty() && !settings_.engine.outputFollowDefault) {
-        warning = cableDetected_ ? QStringLiteral("Select \"CABLE Input\" as the processed output so other apps can use "
-                                                  "\"CABLE Output\" as their microphone.")
-                                 : QStringLiteral("No virtual audio cable found. Install VB-CABLE (see Audio Devices) to "
-                                                  "use processed audio in Discord, Zoom or Teams.");
+        warning = cableDetected_ ? QStringLiteral("Send your voice to your virtual microphone (e.g. \"CABLE Input\") so other "
+                                                  "apps can pick it as their microphone.")
+                                 : QStringLiteral("No virtual microphone found. Install VB-CABLE, or mark your own virtual "
+                                                  "microphone in Setup, to use your voice in Discord, Zoom or Teams.");
     }
     if (warning != routingWarning_) {
         routingWarning_ = warning;
@@ -618,8 +660,10 @@ void EngineController::restartEngine() {
 
 void EngineController::resetToDefaults() {
     const auto customPresets = settings_.customPresets;
+    const auto virtualDeviceIds = settings_.virtualDeviceIds;
     settings_ = AppSettings{};
     settings_.customPresets = customPresets; // user-created presets are kept
+    settings_.virtualDeviceIds = virtualDeviceIds; // and so are the devices marked as virtual microphones
     params_.resetToDefaults();
     if (const Preset* p = findBuiltInPreset(settings_.activePreset)) {
         vs::applyPreset(*p, params_);
@@ -688,6 +732,35 @@ void EngineController::setParam(const QString& key, const QVariant& value) {
     }
     emit paramsChanged();
     scheduleSave();
+}
+
+QVariantList EngineController::voiceLooks() const {
+    QVariantList list;
+    for (const VoiceLook& look : vs::voiceLooks()) {
+        QVariantMap m;
+        m["key"] = QString::fromLatin1(look.key);
+        m["label"] = QString::fromUtf8(look.label);
+        m["description"] = QString::fromUtf8(look.description);
+        list.append(m);
+    }
+    return list;
+}
+
+QString EngineController::voiceLook() const {
+    const VoiceLook* look = matchVoiceLook(params_);
+    return look != nullptr ? QString::fromLatin1(look->key) : QString();
+}
+
+void EngineController::applyVoiceLook(const QString& key) {
+    for (const VoiceLook& look : vs::voiceLooks()) {
+        if (key == QLatin1String(look.key)) {
+            vs::applyVoiceLook(look, params_);
+            logInfo(std::string("Voice character: ") + look.label);
+            emit paramsChanged();
+            scheduleSave();
+            return;
+        }
+    }
 }
 
 QStringList EngineController::effectOrder() const {
@@ -1037,7 +1110,7 @@ void EngineController::resetStatistics() {
 // ---- Strict voice isolation ---------------------------------------------------------------------
 
 namespace {
-constexpr double kEnrollSeconds = 10.0;
+constexpr double kEnrollMinSeconds = 5.0; // Done is offered from here; the model itself needs 3 s
 }
 
 void EngineController::startVoiceEnrollment() {
@@ -1050,12 +1123,30 @@ void EngineController::startVoiceEnrollment() {
         enrollMessage_ = QStringLiteral("Voice isolation is not ready yet.");
     } else if (!engineRunning()) {
         enrollMessage_ = QStringLiteral("Start the audio engine first.");
-    } else if (isolator.startRecording(kEnrollSeconds)) {
+    } else if (isolator.startRecording()) {
         enrollPhase_ = QStringLiteral("recording");
-        enrollMessage_ = QStringLiteral("Recording - read the text aloud in your normal voice...");
+        enrollMessage_ = QStringLiteral("Recording - talk as long as you like, then press Done.");
         logInfo("Voice enrollment recording started");
     }
     refreshIsolation();
+}
+
+void EngineController::finishVoiceEnrollment() {
+    VoiceIsolator& isolator = supervisor_->engine().isolator();
+    if (enrollPhase_ != QLatin1String("recording") || isolator.recordingSeconds() < kEnrollMinSeconds) {
+        return;
+    }
+    isolator.stopRecording();
+    pollIsolation(); // picks up the Ready state and enrolls
+}
+
+void EngineController::openVoiceFolder() {
+    const std::filesystem::path folder = supervisor_->engine().isolator().voiceFolder();
+    if (!folder.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(folder, ec);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdWString(folder.wstring())));
+    }
 }
 
 void EngineController::cancelVoiceEnrollment() {
@@ -1078,13 +1169,19 @@ void EngineController::pollIsolation() {
     VoiceIsolator& isolator = supervisor_->engine().isolator();
     bool changed = false;
     if (enrollPhase_ == QLatin1String("recording")) {
+        isolator.pumpRecording();
         if (!engineRunning()) {
             isolator.cancelRecording();
             enrollPhase_ = QStringLiteral("idle");
             enrollMessage_ = QStringLiteral("The audio engine stopped during recording. Please try again.");
         } else if (isolator.recordingState() == VoiceIsolator::RecordingState::Ready) {
+            if (const std::size_t dropped = isolator.recordingDropped(); dropped > 0) {
+                logWarning("Voice recording: " + std::to_string(dropped) + " samples were lost (UI was busy)");
+            }
+            const double seconds = isolator.recordingSeconds();
             enrollSubmitRevision_ = isolator.statusRevision();
             isolator.enroll(isolator.takeRecording16k(), status_.info.inputName);
+            logInfo("Voice recording finished: " + std::to_string(static_cast<int>(seconds)) + " s");
             enrollPhase_ = QStringLiteral("processing");
             enrollMessage_.clear();
         }
@@ -1116,7 +1213,9 @@ void EngineController::refreshIsolation() {
     iso["enrolled"] = st.enrolled;
     iso["ready"] = st.state == IsolationState::Ready;
     iso["phase"] = enrollPhase_;
-    iso["recordSeconds"] = kEnrollSeconds;
+    iso["recordSeconds"] = round1(isolator.recordingSeconds());
+    iso["recordMinSeconds"] = kEnrollMinSeconds;
+    iso["recordMaxSeconds"] = VoiceIsolator::kRecordMaxSeconds;
     iso["recordProgress"] = static_cast<double>(isolator.recordingProgress());
     iso["recordLevelDb"] = round1(linearToDb(isolator.recordingPeak()));
     iso["enabled"] = enabled;
@@ -1144,15 +1243,25 @@ void EngineController::runVirtualCableTest() {
     if (cableTest_.value("running").toBool()) {
         return;
     }
-    std::wstring cableInput;
-    std::wstring cableOutput;
-    for (const AudioDeviceInfo& d : outputDeviceInfos_) {
-        if (d.isVirtualCable && containsCi(d.name, L"cable input")) {
-            cableInput = d.id;
-        }
+    // Playback side: the processed output if it is virtual, else the suggested virtual microphone.
+    // Recording side: VB-CABLE's "CABLE Output" for its "CABLE Input"; otherwise a device the user marked
+    // as virtual, else any other virtual recording device.
+    const AudioDeviceInfo* playback = findDevice(outputDeviceInfos_, settings_.engine.outputDeviceId);
+    if (playback == nullptr || !playback->isVirtualCable) {
+        playback = suggestedOutput();
     }
+    std::wstring cableInput = playback != nullptr ? playback->id : std::wstring();
+    std::wstring cableOutput;
+    const bool vbCable = playback != nullptr && containsCi(playback->name, L"cable input");
     for (const AudioDeviceInfo& d : inputDeviceInfos_) {
-        if (d.isVirtualCable && containsCi(d.name, L"cable output")) {
+        if (!d.isVirtualCable) {
+            continue;
+        }
+        if (vbCable ? containsCi(d.name, L"cable output") : isUserVirtual(d.id)) {
+            cableOutput = d.id;
+            break;
+        }
+        if (!vbCable && cableOutput.empty()) {
             cableOutput = d.id;
         }
     }
@@ -1161,8 +1270,9 @@ void EngineController::runVirtualCableTest() {
     if (cableInput.empty() || cableOutput.empty()) {
         result["running"] = false;
         result["ok"] = false;
-        result["message"] = QStringLiteral("VB-CABLE endpoints \"CABLE Input\" (playback) and \"CABLE Output\" (recording) "
-                                           "were not both found. Install VB-CABLE and reboot, then refresh devices.");
+        result["message"] = QStringLiteral("A virtual microphone needs a playback side and a recording side, and both were not "
+                                           "found. Install VB-CABLE and reboot, or mark both sides of your own virtual "
+                                           "microphone in Setup, then refresh devices.");
         cableTest_ = result;
         emit cableTestChanged();
         return;

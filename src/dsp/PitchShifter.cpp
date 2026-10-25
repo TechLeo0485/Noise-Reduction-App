@@ -1,7 +1,8 @@
 #include "dsp/PitchShifter.h"
 
-#include "core/DspMath.h"
 #include "core/Parameters.h"
+
+#include <signalsmith-stretch/signalsmith-stretch.h>
 
 #include <algorithm>
 #include <cmath>
@@ -9,91 +10,121 @@
 
 namespace vs {
 
-void PitchShifter::prepare(float sampleRate, std::size_t /*maxBlockSize*/) {
+namespace {
+// 35 ms analysis blocks (~29 Hz resolution, enough for low voices) with 4x overlap: ~35 ms latency.
+constexpr float kBlockSeconds = 0.035f;
+constexpr float kLowCutHz = 70.0f;
+constexpr float kPresenceHz = 3200.0f;
+} // namespace
+
+struct PitchShifter::Engine {
+    // Fixed seed: no std::random_device (and identical output run to run).
+    signalsmith::stretch::SignalsmithStretch<float> stretch{1};
+};
+
+PitchShifter::PitchShifter() = default;
+PitchShifter::~PitchShifter() = default;
+
+void PitchShifter::prepare(float sampleRate, std::size_t maxBlockSize) {
     sampleRate_ = sampleRate;
-    windowSamples_ = std::min(0.025f * sampleRate, static_cast<float>(kBufferSize / 2));
-    minDelay_ = 32.0f;
-    buffer_ = std::make_unique<float[]>(kBufferSize);
+    engine_ = std::make_unique<Engine>();
+    const int block = static_cast<int>(std::lround(kBlockSeconds * sampleRate));
+    engine_->stretch.configure(1, block, block / 4);
+    latency_ = engine_->stretch.inputLatency() + engine_->stretch.outputLatency();
+    input_.assign(std::max<std::size_t>(maxBlockSize, 1), 0.0f);
+    lowCut_.setCoeffs(designHighPass(sampleRate, kLowCutHz, 0.7071f));
+    dirty_ = true;
     reset();
 }
 
 void PitchShifter::reset() noexcept {
-    if (buffer_) {
-        std::memset(buffer_.get(), 0, kBufferSize * sizeof(float));
+    if (engine_) {
+        engine_->stretch.reset();
     }
-    writePos_ = 0;
-    phase_ = 0.0f;
-    mix_ = enabled_ ? 1.0f : 0.0f;
+    lowCut_.reset();
+    presence_.reset();
+    active_ = false;
+    warmup_ = 0;
+    mix_ = 0.0f;
 }
 
-void PitchShifter::configure(bool enabled, float semitones) noexcept {
-    enabled_ = enabled && std::fabs(semitones) > 0.01f;
-    ratio_ = std::pow(2.0f, semitones / 12.0f);
+void PitchShifter::configure(bool enabled, float semitones, float bodySemitones, float presenceDb) noexcept {
+    if (enabled != enabled_ || semitones != semitones_ || bodySemitones != body_ || presenceDb != presenceDb_) {
+        enabled_ = enabled;
+        semitones_ = semitones;
+        body_ = bodySemitones;
+        presenceDb_ = presenceDb;
+        dirty_ = true;
+    }
 }
 
 void PitchShifter::updateParameters(const EngineParameters& p) noexcept {
-    configure(p.getBool(ParamId::PitchEnabled), p.get(ParamId::PitchSemitones));
+    configure(p.getBool(ParamId::PitchEnabled), p.get(ParamId::PitchSemitones), p.get(ParamId::PitchBodySt),
+              p.get(ParamId::PitchPresenceDb));
 }
 
 int PitchShifter::latencySamples() const noexcept {
-    return enabled_ ? static_cast<int>(minDelay_ + windowSamples_ * 0.5f) : 0;
+    return mix_ > 0.0f ? latency_ : 0;
 }
 
-float PitchShifter::readDelayed(float delaySamples) const noexcept {
-    const float readPos = static_cast<float>(writePos_) - delaySamples;
-    const float floorPos = std::floor(readPos);
-    const float frac = readPos - floorPos;
-    const auto i0 = static_cast<std::size_t>(static_cast<long long>(floorPos)) & kMask;
-    const std::size_t i1 = (i0 + 1) & kMask;
-    return buffer_[i0] + frac * (buffer_[i1] - buffer_[i0]);
+void PitchShifter::applySettings() noexcept {
+    engine_->stretch.setTransposeSemitones(semitones_);
+    // Formant compensation keeps the formants in place under the transposition; Body then moves them on purpose.
+    engine_->stretch.setFormantSemitones(-body_, true);
+    presence_.setCoeffs(designPeaking(sampleRate_, kPresenceHz, 0.8f, presenceDb_));
+    dirty_ = false;
 }
 
 void PitchShifter::process(float* samples, std::size_t count) noexcept {
-    if (!buffer_ || count == 0) {
+    if (!engine_ || count == 0) {
         return;
     }
-    const float targetMix = enabled_ ? 1.0f : 0.0f;
-    if (mix_ == 0.0f && targetMix == 0.0f) {
-        // Bypassed: keep the delay line filled so a later enable starts from real audio.
-        for (std::size_t i = 0; i < count; ++i) {
-            buffer_[writePos_] = samples[i];
-            writePos_ = (writePos_ + 1) & kMask;
+    if (count > input_.size()) { // never in the chain (fixed frames); keeps direct callers safe
+        for (std::size_t offset = 0; offset < count; offset += input_.size()) {
+            process(samples + offset, std::min(input_.size(), count - offset));
         }
         return;
     }
+    if (dirty_) {
+        applySettings();
+    }
+    const bool wanted = enabled_ && (std::fabs(semitones_) > 0.01f || std::fabs(body_) > 0.01f ||
+                                     std::fabs(presenceDb_) > 0.05f);
+    if (!active_) {
+        if (!wanted) {
+            return;
+        }
+        // Start from a clean state; the dry signal plays until the shifter's output is valid.
+        engine_->stretch.reset();
+        lowCut_.reset();
+        presence_.reset();
+        active_ = true;
+        warmup_ = latency_;
+        mix_ = 0.0f;
+    }
 
-    // The tap delay changes by (1 - ratio) samples per output sample.
-    const float phaseIncrement = (1.0f - ratio_) / windowSamples_;
-    const float mixStep = (targetMix - mix_) / static_cast<float>(count);
-    float mix = mix_;
-
+    float* dry = input_.data();
+    std::memcpy(dry, samples, count * sizeof(float));
+    const float* in[1] = {dry};
+    float* out[1] = {samples};
+    engine_->stretch.process(in, static_cast<int>(count), out, static_cast<int>(count));
     for (std::size_t i = 0; i < count; ++i) {
-        buffer_[writePos_] = samples[i];
-
-        float p2 = phase_ + 0.5f;
-        if (p2 >= 1.0f) {
-            p2 -= 1.0f;
-        }
-        const float d1 = minDelay_ + phase_ * windowSamples_;
-        const float d2 = minDelay_ + p2 * windowSamples_;
-        // sin(pi*p) and sin(pi*(p+0.5)) are power-complementary and reach zero exactly where
-        // each tap's delay wraps, hiding the discontinuity.
-        const float g1 = std::sin(kPi * phase_);
-        const float g2 = std::sin(kPi * p2);
-        const float wet = readDelayed(d1) * g1 + readDelayed(d2) * g2;
-
-        mix += mixStep;
-        samples[i] = samples[i] + mix * (wet - samples[i]);
-
-        writePos_ = (writePos_ + 1) & kMask;
-        phase_ += phaseIncrement;
-        if (phase_ >= 1.0f) {
-            phase_ -= 1.0f;
-        } else if (phase_ < 0.0f) {
-            phase_ += 1.0f;
-        }
+        samples[i] = presence_.process(lowCut_.process(samples[i]));
     }
-    mix_ = targetMix;
+
+    const bool ready = warmup_ <= 0;
+    warmup_ = std::max(0, warmup_ - static_cast<int>(count));
+    const float target = wanted && ready ? 1.0f : 0.0f;
+    const float step = (target - mix_) / static_cast<float>(count);
+    float mix = mix_;
+    for (std::size_t i = 0; i < count; ++i) {
+        mix += step;
+        samples[i] = dry[i] + mix * (samples[i] - dry[i]);
+    }
+    mix_ = target;
+    if (!wanted && mix_ == 0.0f) {
+        active_ = false;
+    }
 }
 
 } // namespace vs

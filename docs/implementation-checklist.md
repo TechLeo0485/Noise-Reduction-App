@@ -51,7 +51,7 @@ Legend: **[x]** implemented in code · **[v]** verified by building and running 
 
 ## Phase 4: voice customization
 
-- [x] 5-band EQ, compressor, limiter, pitch shift (low latency, off by default)
+- [x] 5-band EQ, compressor, limiter, voice character: formant-preserving depth / body / presence (off by default)
 - [x] Configurable effect order
 - [x] Built-in presets + custom presets, saved configuration (versioned JSON, validated)
 - [x] Performance modes

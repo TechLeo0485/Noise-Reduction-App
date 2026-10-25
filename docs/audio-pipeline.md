@@ -17,7 +17,8 @@ Physical microphone
             → SPSC ring → frame (isolated voice or silence; see below)
         noise suppression: Off | DSP-only | RNNoise    (one-frame crossfade on change)
         noise gate / downward expander, held open by RNNoise VAD
-        EQ → compressor → pitch   (user-configurable order)
+        EQ → compressor → voice character   (user-configurable order; voice character =
+            formant-preserving pitch (Signalsmith Stretch, 35 ms blocks) → 70 Hz high-pass → presence peak)
         voice volume, master mute (ramped)
         limiter (zero latency) → NaN/Inf guard → hard clip ±1.0
   → SPSC ring (output) [+ SPSC ring (monitor, with monitor gain)]
@@ -99,8 +100,9 @@ followed by a burst.
 Changing suppression engine processes one frame with both engines and crossfades with a
 raised-cosine curve. RNNoise output lags its input by one frame, so the crossfade blends
 signals 10 ms apart for 10 ms. That is inaudible in practice and avoids the hard step that
-would otherwise click. Enabling/disabling the compressor and pitch shifter is ramped inside
-each effect. Gain, volume and mute changes are ramped per frame.
+would otherwise click. Enabling/disabling the compressor is ramped inside the effect. The voice character keeps the
+dry signal until its shifter has valid output (~35 ms after a start), then crossfades over one
+frame; turning it off crossfades back. Gain, volume and mute changes are ramped per frame.
 
 ## Fallback order
 

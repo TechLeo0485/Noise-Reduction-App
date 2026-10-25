@@ -1,5 +1,7 @@
 #include "settings/Presets.h"
 
+#include <cmath>
+
 namespace vs {
 
 namespace {
@@ -9,8 +11,10 @@ constexpr float kDspOnly = static_cast<float>(SuppressionMode::DspOnly);
 
 bool isPresetScoped(ParamId id) noexcept {
     // Strict isolation is a privacy control, not a sound setting: a preset must never switch it off.
+    // The voice character (depth, body, presence) is the user's own voice and has its own looks, so
+    // switching between room/noise presets keeps it.
     return id != ParamId::InputGainDb && id != ParamId::MasterMute && id != ParamId::MonitorGainDb &&
-           id != ParamId::IsolationEnabled;
+           id != ParamId::IsolationEnabled && !isVoiceCharacterParam(id);
 }
 
 const std::vector<Preset>& builtInPresets() {
@@ -29,16 +33,14 @@ const std::vector<Preset>& builtInPresets() {
           {ParamId::CompressorEnabled, 1.f},
           {ParamId::CompThresholdDb, -22.f},
           {ParamId::CompRatio, 2.5f},
-          {ParamId::CompMakeupDb, 3.f},
-          {ParamId::PitchEnabled, 0.f}}},
+          {ParamId::CompMakeupDb, 3.f}}},
         {"Natural Voice",
          "Minimal colouration: noise suppression and safety limiting only.",
          {{ParamId::SuppressionMode, kRNNoise},
           {ParamId::SuppressionStrength, 85.f},
           {ParamId::GateRangeDb, 15.f},
           {ParamId::GateRatio, 2.f},
-          {ParamId::CompressorEnabled, 0.f},
-          {ParamId::PitchEnabled, 0.f}}},
+          {ParamId::CompressorEnabled, 0.f}}},
         {"Gaming",
          "Aggressive keyboard/mouse suppression and a tighter gate.",
          {{ParamId::SuppressionMode, kRNNoise},
@@ -130,6 +132,39 @@ void applyPresetValues(const std::map<std::string, float>& values, EngineParamet
             params.set(spec->id, value); // clamped by EngineParameters::set
         }
     }
+}
+
+const std::vector<VoiceLook>& voiceLooks() {
+    static const std::vector<VoiceLook> looks = {
+        {"natural", "Natural", "Your own voice, unchanged.", 0.f, 0.f, 0.f},
+        {"deepStrong", "Deep & Strong", "Lower and fuller, still clear.", -3.f, 1.5f, 4.f},
+        {"warm", "Warm", "A little deeper and softer.", -1.5f, 1.f, 1.5f},
+        {"radio", "Radio", "Thick, close and present, like a radio host.", -2.f, 2.5f, 6.f},
+    };
+    return looks;
+}
+
+void applyVoiceLook(const VoiceLook& look, EngineParameters& params) {
+    params.set(ParamId::PitchSemitones, look.depthSt);
+    params.set(ParamId::PitchBodySt, look.bodySt);
+    params.set(ParamId::PitchPresenceDb, look.presenceDb);
+    const bool changes = look.depthSt != 0.f || look.bodySt != 0.f || look.presenceDb != 0.f;
+    params.set(ParamId::PitchEnabled, changes ? 1.f : 0.f);
+}
+
+const VoiceLook* matchVoiceLook(const EngineParameters& params) {
+    const auto& looks = voiceLooks();
+    if (!params.getBool(ParamId::PitchEnabled)) {
+        return &looks.front();
+    }
+    for (const VoiceLook& look : looks) {
+        if (std::fabs(params.get(ParamId::PitchSemitones) - look.depthSt) < 0.01f &&
+            std::fabs(params.get(ParamId::PitchBodySt) - look.bodySt) < 0.01f &&
+            std::fabs(params.get(ParamId::PitchPresenceDb) - look.presenceDb) < 0.01f) {
+            return &look;
+        }
+    }
+    return nullptr;
 }
 
 const std::vector<PerformanceProfile>& performanceProfiles() {

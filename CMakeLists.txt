@@ -79,6 +79,11 @@ if(VOICESTUDIO_WITH_RNNOISE)
     target_link_libraries(vs_core PRIVATE rnnoise)
     target_compile_definitions(vs_core PRIVATE VOICESTUDIO_HAS_RNNOISE=1)
 endif()
+# Signalsmith Stretch is header-only and heavily templated: only PitchShifter.cpp includes it.
+target_link_libraries(vs_core PRIVATE signalsmith_stretch)
+if(MSVC)
+    set_source_files_properties(src/dsp/PitchShifter.cpp PROPERTIES COMPILE_OPTIONS "/bigobj")
+endif()
 if(VOICESTUDIO_WITH_VOXLOCK)
     target_sources(vs_core PRIVATE
         src/ai/voxlock/OnnxModelPatch.cpp
@@ -140,6 +145,9 @@ if(VOICESTUDIO_BUILD_APP)
             ui/themes/Theme.qml
             ui/components/Card.qml
             ui/components/ChecklistItem.qml
+            ui/components/ChipRow.qml
+            ui/components/Expander.qml
+            ui/components/LinkText.qml
             ui/components/LevelMeter.qml
             ui/components/ModeTile.qml
             ui/components/NavButton.qml
@@ -157,13 +165,10 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/VoiceIsolationCard.qml
             ui/components/DeviceTile.qml
             ui/screens/HomeScreen.qml
-            ui/screens/SoundScreen.qml
-            ui/screens/SettingsScreen.qml
-            ui/screens/NoiseReductionScreen.qml
-            ui/screens/VoiceEffectsScreen.qml
-            ui/screens/DevicesScreen.qml
-            ui/screens/PerformanceScreen.qml
-            ui/screens/AdvancedScreen.qml
+            ui/screens/VoiceScreen.qml
+            ui/screens/CleanupScreen.qml
+            ui/screens/MyVoiceScreen.qml
+            ui/screens/SetupScreen.qml
             ui/screens/HelpScreen.qml)
 
     target_link_libraries(VoiceStudio PRIVATE

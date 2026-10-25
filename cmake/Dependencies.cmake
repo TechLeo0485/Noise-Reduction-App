@@ -138,6 +138,46 @@ if(VOICESTUDIO_WITH_VOXLOCK)
     message(STATUS "VoxLock models: ${VOICESTUDIO_VOXLOCK_DIR}")
 endif()
 
+# ---- Voice character: Signalsmith Stretch (formant-preserving pitch shift) ---------------------
+#
+#   Signalsmith Stretch 1.4.0 - MIT. Header-only.
+#   Signalsmith Linear 0.6.4  - MIT. Header-only; the FFT/STFT used by Stretch.
+#
+# Only the headers are used (SOURCE_SUBDIR skips their own CMake files, which would fetch from git).
+# Offline builds: set SIGNALSMITH_STRETCH_DIR / SIGNALSMITH_LINEAR_DIR to the extracted archives.
+set(SIGNALSMITH_STRETCH_DIR "" CACHE PATH "Use an already-extracted signalsmith-stretch 1.4.0 source tree")
+set(SIGNALSMITH_LINEAR_DIR "" CACHE PATH "Use an already-extracted signalsmith linear 0.6.4 source tree")
+if(SIGNALSMITH_STRETCH_DIR)
+    set(_stretch_dir "${SIGNALSMITH_STRETCH_DIR}")
+else()
+    FetchContent_Declare(signalsmith_stretch_src
+        URL https://github.com/Signalsmith-Audio/signalsmith-stretch/archive/refs/tags/1.4.0.tar.gz
+        URL_HASH SHA256=077235709ecf2a358545e3ca7bdf32859f70f5c9afb4493e078bd753c9aff284
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR voicestudio-no-cmake)
+    FetchContent_MakeAvailable(signalsmith_stretch_src)
+    set(_stretch_dir "${signalsmith_stretch_src_SOURCE_DIR}")
+endif()
+if(SIGNALSMITH_LINEAR_DIR)
+    set(_linear_dir "${SIGNALSMITH_LINEAR_DIR}")
+else()
+    FetchContent_Declare(signalsmith_linear_src
+        URL https://github.com/Signalsmith-Audio/linear/archive/refs/tags/0.6.4.tar.gz
+        URL_HASH SHA256=2cb10d84b96c626255ab46c4aa4c80f64ae532be487063cff6a08903c1445a56
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR voicestudio-no-cmake)
+    FetchContent_MakeAvailable(signalsmith_linear_src)
+    set(_linear_dir "${signalsmith_linear_src_SOURCE_DIR}")
+endif()
+if(NOT EXISTS "${_stretch_dir}/include/signalsmith-stretch/signalsmith-stretch.h" OR
+   NOT EXISTS "${_linear_dir}/include/signalsmith-linear/stft.h")
+    message(FATAL_ERROR "Signalsmith Stretch / Linear headers not found (${_stretch_dir}, ${_linear_dir}).")
+endif()
+add_library(signalsmith_stretch INTERFACE)
+target_include_directories(signalsmith_stretch SYSTEM INTERFACE
+    "${_stretch_dir}/include" "${_linear_dir}/include")
+message(STATUS "Signalsmith Stretch: ${_stretch_dir}")
+
 if(VOICESTUDIO_BUILD_TESTS)
     find_package(GTest CONFIG QUIET)
     if(NOT GTest_FOUND)

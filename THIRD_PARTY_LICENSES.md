@@ -4,6 +4,7 @@
 |---|---|---|---|---|
 | Qt (Core, Gui, Qml, Quick, QuickControls2) | 6.5+ | LGPL-3.0 (or commercial) | UI | Yes, as dynamically linked DLLs (LGPL requirement: users can replace them) |
 | RNNoise (Xiph.Org Foundation, Jean-Marc Valin) | 0.2 | BSD-3-Clause, including the bundled model weights | Noise suppression | Yes, statically linked |
+| Signalsmith Stretch + Signalsmith Linear (Signalsmith Audio) | 1.4.0 / 0.6.4 | MIT | Voice character (formant-preserving pitch shift) | Yes, header-only, compiled in |
 | GoogleTest | 1.15.2 | BSD-3-Clause | Tests only | No |
 | ONNX Runtime (Microsoft) | 1.31.0, CPU package | MIT | Strict voice isolation inference | Yes, `onnxruntime.dll` (loaded at runtime) |
 | VoxLock (Arbaz Siddiqui), models `enroll.onnx` + `chunk_int8_full.onnx`, revision a50f4e1d | 1.x | Apache-2.0 (weights and code); model code derived from WeSep (Apache-2.0) | Strict voice isolation | Yes, `models/voxlock/`. `src/ai/voxlock/VoxLockStream.cpp` and `VoxLockEnrollment.cpp` port its streaming code |
@@ -16,6 +17,7 @@ Before release, copy the full license texts into `licenses/` in the installer:
   link to the Qt source code used.
 - RNNoise: `COPYING` from the RNNoise source archive.
 - ONNX Runtime: `LICENSE` and `ThirdPartyNotices.txt` from the ONNX Runtime package.
+- Signalsmith Stretch / Linear: `LICENSE.txt` from each source archive.
 - VoxLock: `LICENSE` (Apache-2.0) and `NOTICE` from https://huggingface.co/arbazsiddiqui/voxlock
   ("VoxLock, Copyright 2026 Arbaz Siddiqui"; wesep/ from the REAL-TSE WeSep baseline, Apache-2.0).
 

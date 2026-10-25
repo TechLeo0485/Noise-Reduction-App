@@ -9,7 +9,7 @@ Three different quantities, reported separately:
 
 | Quantity | What it is | Where it comes from |
 |---|---|---|
-| **Algorithmic latency** | Delay inherent in the algorithms, independent of CPU speed | RNNoise: 10 ms (one 480-sample frame). Pitch: about 12.7 ms when enabled. Resamplers: 16 input samples each (0.33 ms at 48 kHz). DSP-only, gate, EQ, compressor, limiter: 0 |
+| **Algorithmic latency** | Delay inherent in the algorithms, independent of CPU speed | RNNoise: 10 ms (one 480-sample frame). Voice character (pitch/formant): about 35 ms while active, 0 when off. Resamplers: 16 input samples each (0.33 ms at 48 kHz). DSP-only, gate, EQ, compressor, limiter: 0 |
 | **Processing execution time** | CPU time to process one 10 ms frame | Measured per frame (QPC); shown as P50/P95/P99 |
 | **End-to-end latency** | Sound at the mic → sound available to the receiving app | Measured with a loopback (section 3) |
 
@@ -18,7 +18,7 @@ Components visible to the application (*Performance* screen, *Latency breakdown*
 ```
 capture device period          (negotiated; e.g. 10 ms default, 2.67-5 ms with IAudioClient3)
 + framing to 10 ms             (0 when the capture period is 10 ms; worst case 10 - period)
-+ algorithmic                  (RNNoise 10 ms, pitch ~12.7 ms)
++ algorithmic                  (RNNoise 10 ms, voice character ~35 ms)
 + processing execution         (P50 measured)
 + resampler filters            (0.33 ms per resampling stage)
 + jitter buffer                (measured mean ring fill)

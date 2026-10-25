@@ -59,6 +59,9 @@ class EngineController : public QObject {
     Q_PROPERTY(bool presetModified READ presetModified NOTIFY presetsChanged)
     Q_PROPERTY(bool rnnoiseAvailable READ rnnoiseAvailable CONSTANT)
     Q_PROPERTY(bool advancedAiAvailable READ advancedAiAvailable CONSTANT)
+    // Voice character looks (Natural, Deep & Strong, ...) and the one the current values match ("" = custom).
+    Q_PROPERTY(QVariantList voiceLooks READ voiceLooks CONSTANT)
+    Q_PROPERTY(QString voiceLook READ voiceLook NOTIFY paramsChanged)
 
     // Live meters (~30 Hz)
     Q_PROPERTY(double inputLevelDb READ inputLevelDb NOTIFY metersChanged)
@@ -135,6 +138,8 @@ public:
     [[nodiscard]] bool presetModified() const { return presetModified_; }
     [[nodiscard]] bool rnnoiseAvailable() const;
     [[nodiscard]] bool advancedAiAvailable() const;
+    [[nodiscard]] QVariantList voiceLooks() const;
+    [[nodiscard]] QString voiceLook() const;
 
     // Meters
     [[nodiscard]] double inputLevelDb() const { return inputLevelDb_; }
@@ -176,6 +181,7 @@ public:
     Q_INVOKABLE void selectOutputDevice(const QString& id);
     Q_INVOKABLE void selectMonitorDevice(const QString& id);
     Q_INVOKABLE void applyPreset(const QString& name);
+    Q_INVOKABLE void applyVoiceLook(const QString& key);
     Q_INVOKABLE void saveCustomPreset(const QString& name);
     Q_INVOKABLE void deleteCustomPreset(const QString& name);
     Q_INVOKABLE void setPerformanceMode(const QString& key);
@@ -191,11 +197,16 @@ public:
     Q_INVOKABLE void fixOutput();
     Q_INVOKABLE void startVoiceCheck(double seconds = 5.0);
     Q_INVOKABLE void stopVoiceCheck();
-    // Strict voice isolation: records ~10 s of the microphone, then enrolls it as "your voice" (saved
-    // locally under %LOCALAPPDATA%/VoiceStudio/voice). Re-recording replaces it; delete removes the file.
+    // Strict voice isolation: records the microphone for as long as the user likes (Done ends it, up to
+    // 30 min), then enrolls it as "your voice" (saved locally under %LOCALAPPDATA%/VoiceStudio/voice,
+    // with the full recording). Re-recording replaces it; delete removes the files.
     Q_INVOKABLE void startVoiceEnrollment();
+    Q_INVOKABLE void finishVoiceEnrollment();
     Q_INVOKABLE void cancelVoiceEnrollment();
     Q_INVOKABLE void deleteVoiceEnrollment();
+    Q_INVOKABLE void openVoiceFolder();
+    // Marks an audio device as a virtual microphone (e.g. the user's own driver) so routing treats it like a cable.
+    Q_INVOKABLE void setDeviceVirtual(const QString& id, bool isVirtual);
     Q_INVOKABLE void resetStatistics();
     // Called by the window when it hides itself instead of closing (shows a one-time tray notice).
     Q_INVOKABLE void notifyHiddenToTray() { emit hiddenToTray(); }
@@ -237,6 +248,7 @@ private:
     [[nodiscard]] const AudioDeviceInfo* findDevice(const std::vector<AudioDeviceInfo>& list, const std::wstring& id) const;
     [[nodiscard]] const AudioDeviceInfo* suggestedMicrophone() const;
     [[nodiscard]] const AudioDeviceInfo* suggestedOutput() const;
+    [[nodiscard]] bool isUserVirtual(const std::wstring& id) const;
     void startVoicePlayback(std::vector<float> recording);
     void setVoiceCheck(const QString& state, const QString& message, double progress = 0.0);
     [[nodiscard]] QVariantMap buildHardwareMap() const;

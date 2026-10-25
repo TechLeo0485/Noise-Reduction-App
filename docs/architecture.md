@@ -124,4 +124,4 @@ are reconfigured or destroyed (`AudioEngine::stop()` stops capture first, then r
 | Bluetooth HFP microphones (16 kHz, high latency) | Quality and delay limited by the device | Safe buffer mode; documented |
 | Background-speaker suppression | RNNoise cannot separate voices | Feature marked experimental and unavailable; never claimed |
 | Zero-latency limiter | Can distort on extreme transients | Compressor in front; ceiling configurable |
-| Pitch shifter (delay-line) | Audible warble on large shifts, ~12 ms delay | Off by default |
+| Voice character (Signalsmith Stretch, formant-preserving) | ~35 ms delay while active | Off by default; bypassed (0 ms) when Natural |

@@ -9,6 +9,7 @@
 #include <array>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace vs {
 
@@ -27,6 +28,8 @@ struct AppSettings {
     bool engineEnabled = true;
     bool advancedUi = false; // simple UI by default; technical screens are opt-in
     bool closeToTray = true; // closing the window keeps VoiceStudio running in the notification area
+    // Devices the user marked as a virtual microphone (their own driver, or any device the name check misses).
+    std::vector<std::wstring> virtualDeviceIds;
 
     AppSettings();
     void captureParams(const EngineParameters& source);

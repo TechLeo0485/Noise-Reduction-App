@@ -66,7 +66,8 @@ class VoiceIsolator {
 public:
     static constexpr int kSampleRate = 48000;
     static constexpr std::size_t kFrameSize = 480;
-    static constexpr std::size_t kRecordMaxSamples = static_cast<std::size_t>(kSampleRate) * 20;
+    // A voice recording can run as long as the user likes, up to 30 minutes (~115 MB at 16 kHz).
+    static constexpr double kRecordMaxSeconds = 30.0 * 60.0;
 
     using ModelFactory = std::function<std::unique_ptr<voxlock::IChunkModel>(int framesPerRun)>;
 
@@ -90,6 +91,8 @@ public:
     void enroll(std::vector<float> audio16k, std::string microphone = {});
     // Deletes the saved voice. While isolation is enabled the output is silent until a new voice is enrolled.
     void deleteEnrollment();
+    // Folder of the saved voice (sample and full recording); empty before initialize().
+    [[nodiscard]] std::filesystem::path voiceFolder() const { return enrollmentFile_.parent_path(); }
     // Blocks until queued control work (initialize/enroll/delete) has finished. For tests and tools.
     void waitIdle();
 
@@ -98,15 +101,25 @@ public:
     [[nodiscard]] std::uint64_t statusRevision() const noexcept { return statusRevision_.load(std::memory_order_acquire); }
 
     // ---- Voice enrollment recording (UI starts it, the capture thread fills it) ----------------------
+    //
+    // The capture thread pushes the microphone into a lock-free ring; pumpRecording() (UI thread, called
+    // often) resamples it to 16 kHz and appends it to the recording, so the length is not limited by a
+    // preallocated buffer. The recording ends with stopRecording() or after `maxSeconds`.
     enum class RecordingState : int { Idle = 0, Recording = 1, Ready = 2 };
-    bool startRecording(double seconds) noexcept;
+    bool startRecording(double maxSeconds = kRecordMaxSeconds);
+    void stopRecording() noexcept;
     void cancelRecording() noexcept;
     [[nodiscard]] RecordingState recordingState() const noexcept {
         return static_cast<RecordingState>(recordState_.load(std::memory_order_acquire));
     }
-    [[nodiscard]] float recordingProgress() const noexcept;
+    [[nodiscard]] double recordingSeconds() const noexcept;
+    [[nodiscard]] float recordingProgress() const noexcept; // of maxSeconds
     [[nodiscard]] float recordingPeak() const noexcept { return recordPeak_.load(std::memory_order_relaxed); }
-    // The finished recording resampled to 16 kHz (valid in the Ready state); returns to Idle.
+    // Samples lost because pumpRecording() was not called in time (the ring holds ~5 s).
+    [[nodiscard]] std::size_t recordingDropped() const noexcept { return recordDropped_.load(std::memory_order_relaxed); }
+    // Moves captured audio from the ring into the 16 kHz recording. Call from one non-real-time thread.
+    void pumpRecording();
+    // The finished recording at 16 kHz (valid in the Ready state); returns to Idle.
     [[nodiscard]] std::vector<float> takeRecording16k();
 
     // ---- Real-time (capture thread) -----------------------------------------------------------------
@@ -141,6 +154,7 @@ private:
     void setStatus(IsolationState state, const std::string& message, bool busy);
     void monitor();
     [[nodiscard]] std::filesystem::path microphoneFile() const;
+    [[nodiscard]] std::filesystem::path recordingFile() const;
     bool prepareVoice(const std::vector<float>& audio16k, std::string& error);
     void publish(std::unique_ptr<voxlock::IChunkModel> model, int framesPerRun);
     void requestRestart() noexcept;
@@ -227,12 +241,16 @@ private:
     std::array<float, 2 * kFrameSize> trimScratch_{};
     std::array<float, kFrameSize> scratch_{};
 
-    // Enrollment recording
-    std::vector<float> recordBuffer_;
+    // Enrollment recording: capture thread -> recordRing_ -> pumpRecording() -> recorded16k_
+    SpscRingBuffer<float> recordRing_;
     std::atomic<int> recordState_{0};
-    std::atomic<std::size_t> recordLength_{0};
-    std::atomic<std::size_t> recordPosition_{0};
+    std::atomic<std::size_t> recordLength_{0};   // 48 kHz samples to record at most
+    std::atomic<std::size_t> recordPosition_{0}; // 48 kHz samples captured so far
+    std::atomic<std::size_t> recordDropped_{0};
     std::atomic<float> recordPeak_{0.0f};
+    Resampler recordResampler_;                  // consumer side only
+    std::vector<float> recordChunk_;
+    std::vector<float> recorded16k_;
 
     Metrics metrics_;
 };

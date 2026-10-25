@@ -48,8 +48,10 @@ constexpr std::array<ParamSpec, kParamCount> kSpecs{{
     {ParamId::LimiterCeilingDb, "limiterCeilingDb", "Limiter ceiling", K::Float, -12.f, 0.f, -1.f, 0.1f, "dBFS"},
     {ParamId::LimiterReleaseMs, "limiterReleaseMs", "Limiter release", K::Float, 5.f, 500.f, 60.f, 1.f, "ms"},
 
-    {ParamId::PitchEnabled, "pitchEnabled", "Pitch shift", K::Bool, 0.f, 1.f, 0.f, 1.f, ""},
-    {ParamId::PitchSemitones, "pitchSemitones", "Pitch", K::Float, -12.f, 12.f, 0.f, 0.5f, "st"},
+    {ParamId::PitchEnabled, "pitchEnabled", "Voice character", K::Bool, 0.f, 1.f, 0.f, 1.f, ""},
+    {ParamId::PitchSemitones, "pitchSemitones", "Depth", K::Float, -12.f, 12.f, 0.f, 0.5f, "st"},
+    {ParamId::PitchBodySt, "pitchBodySt", "Body", K::Float, -6.f, 6.f, 0.f, 0.5f, "st"},
+    {ParamId::PitchPresenceDb, "pitchPresenceDb", "Presence", K::Float, 0.f, 9.f, 0.f, 0.5f, "dB"},
 
     {ParamId::IsolationEnabled, "isolationEnabled", "Strict voice isolation", K::Bool, 0.f, 1.f, 0.f, 1.f, ""},
 }};

@@ -3,7 +3,7 @@
 Local, low-latency microphone noise suppression and voice processing for Windows 10/11.
 
 VoiceStudio captures your microphone with WASAPI, removes background noise (RNNoise or a
-DSP-only mode), applies a gate, EQ, compression, optional pitch and a limiter, and plays the
+DSP-only mode), applies a gate, EQ, compression, optional voice character and a limiter, and plays the
 result into a virtual audio cable (VB-CABLE). Discord, Zoom, Teams and games then use the
 cable as their microphone. Everything runs on your machine: no cloud, no account, no telemetry.
 
@@ -21,7 +21,7 @@ cable as their microphone. Everything runs on your machine: no cloud, no account
 | Clock-drift compensation between microphone and output device | Implemented (adaptive resampling) |
 | RNNoise neural noise suppression (10 ms frames, 48 kHz) | Implemented |
 | DSP-only noise control, high-pass, noise gate/expander with VAD hold | Implemented |
-| 5-band EQ, compressor, zero-latency limiter, low-latency pitch shift | Implemented |
+| 5-band EQ, compressor, zero-latency limiter, voice character (formant-preserving pitch, body, presence) | Implemented |
 | Presets (Interview, Natural Voice, Gaming, Streaming, NR Maximum, custom) | Implemented |
 | Performance modes (Ultra-Low Latency, Balanced, Maximum NR, Custom) | Implemented |
 | CPU / GPU detection (CPUID, DXGI) | Implemented |

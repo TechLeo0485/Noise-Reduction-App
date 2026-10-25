@@ -23,23 +23,43 @@ Open VoiceStudio. The **Home** page shows a checklist. Make every item green:
 
 | Checklist item | What to do |
 |---|---|
-| **Microphone** | If it shows the wrong device, click **Use …** or go to **Devices**. |
-| **Virtual cable installed** | Done by the setup. If not, see Troubleshooting. |
-| **Sending your voice to the virtual cable** | Click **Fix it** if it is not green. |
+| **Microphone** | If it shows the wrong device, click **Use …** or go to **Setup**. |
+| **Virtual microphone found** | Done by the setup (VB-CABLE). If not, see Troubleshooting. |
+| **Sending your voice to the virtual microphone** | Click **Fix it** if it is not green. |
 | **We can hear you** | Say something; the meter should move. |
 
-### Choosing your microphone (Devices page)
+The checklist disappears once everything is green.
+
+### The pages
+
+| Page | What it is for |
+|---|---|
+| **Home** | Is everything working, mute, microphone volume, quick voice character and noise level, hear yourself |
+| **Voice** | How you sound: voice character (deep, strong, warm...) and tone |
+| **Clean-up** | Background noise, *Only send my voice*, and ready-made settings per situation |
+| **My Voice** | Record your voice (as long as you like) |
+| **Setup** | Microphone, virtual microphone, headphones, general settings; *Advanced* holds speed, buffers, measurements and logging |
+
+Expert settings sit under **Fine-tune** on the page they belong to. Click it to open.
+
+### Choosing your microphone (Setup page)
 
 * **1. Your microphone**: click the microphone you speak into. A green bar under it shows **"Hearing you"** when you talk.
   *Windows default microphone* follows whatever Windows uses.
-* **2. Send your voice to apps**: should say **✓ Sending your voice to "CABLE Input"**. If not, click **Use CABLE Input**.
+* **2. Send your voice to apps**: should say **✓ Sending your voice to "CABLE Input"** (or your own virtual microphone). If not, click **Use virtual microphone**.
 * **3. Headphones** (optional): turn on **Listen live** to hear yourself. Use headphones, not speakers, or you get an echo.
+
+### Using your own virtual microphone
+
+VoiceStudio works with any virtual audio driver, not only VB-CABLE. Devices with "cable" or "virtual" in their name are found automatically.
+If yours is not, open **Setup → 2. Send your voice to apps → Use my own virtual microphone** and switch on both of its sides:
+the **playback side** (VoiceStudio sends your voice there) and the **recording side** (call apps use it as the microphone).
 
 ---
 
 ## 3. Use it in your call app
 
-In your call app, pick **CABLE Output** as the **microphone**:
+In your call app, pick **CABLE Output** as the **microphone** (with your own virtual microphone: its recording side):
 
 | App | Where |
 |---|---|
@@ -59,11 +79,15 @@ Your speakers and headphones in the call app stay unchanged.
 
 This is for situations like a job interview where others may talk in the same room.
 
-1. Go to **Sound** (or **Noise Reduction**). Find **Strict voice isolation**.
-2. Click **Record my voice (10 s)**. Read the text on screen in your normal voice.
+1. Go to **My Voice** and click **Start recording**.
+2. Follow the guide on screen. It changes every 20 seconds: **normal**, **louder**, **quiet**, **higher**, **lower**, **with feeling**, then **free talk**.
+   Talk as long as you like (1 to 3 minutes works great, up to 30 minutes), then click **Done**.
    * Be **alone and in a quiet room** while recording.
    * Use the **same microphone** you will use in the call.
-3. Turn on **Only send my voice**.
+3. On **Clean-up**, turn on **Strict voice isolation** (card *Only send my voice*).
+
+VoiceStudio picks your clearest everyday speech from the recording to recognise you, so loud or quiet parts never confuse it.
+The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** on the My Voice page to find it.
 
 ### What to expect
 
@@ -87,8 +111,14 @@ This is for situations like a job interview where others may talk in the same ro
 
 ## 5. Sound settings
 
-* **Noise removal** (Sound page): *Off*, *Light*, *Balanced* or *Strong*. *Balanced* suits most rooms.
-* **Voice style**: ready-made settings such as **Interview**, **Natural Voice**, **Gaming** and **Streaming**.
+* **Voice character** (Home or Voice): **Natural**, **Deep & Strong**, **Warm** or **Radio**. On the Voice page you can fine-tune:
+  * **Depth**: a lower (or higher) pitch. Your voice keeps its own tone, so it sounds deeper and stronger, not boomy or robotic.
+  * **Body**: a thicker, bigger voice. Move it left for a lighter voice.
+  * **Presence**: keeps a deeper voice clear and forward.
+
+  For a strong, thick voice: 2 to 4 steps of Depth and a little Body. Voice character adds about 35 ms of delay while it is on, and none when it is set to Natural.
+* **Noise removal** (Home or Clean-up): *Off*, *Light*, *Balanced* or *Strong*. *Balanced* suits most rooms.
+* **Situation** (Clean-up): ready-made noise and tone settings such as **Interview**, **Natural Voice**, **Gaming** and **Streaming**. Your voice character is kept when you switch.
 * **Microphone volume** (Home): aim for the meter to reach the middle when you speak normally.
 * **Mute**: the big button on Home, or right-click the tray icon → **Mute microphone**.
 
@@ -102,8 +132,8 @@ On **Home**, click **Record 5 s and play back**. VoiceStudio plays back exactly 
 
 * **Closing the window does not stop VoiceStudio.** It keeps cleaning your voice and lives in the notification area next to the clock. You may need to click **^** to see the icon. Drag it onto the taskbar to keep it visible.
 * **Click** the icon to open the window. **Right-click** it to mute, switch strict isolation on or off, or **Quit**.
-* **Settings → Start with Windows** starts VoiceStudio automatically (hidden in the tray) when you sign in.
-* **Settings → Keep running when I close the window**: turn it off if you prefer that closing the window quits.
+* **Setup → Start with Windows** starts VoiceStudio automatically (hidden in the tray) when you sign in.
+* **Setup → Keep running when I close the window**: turn it off if you prefer that closing the window quits.
 
 ---
 
@@ -112,9 +142,9 @@ On **Home**, click **Record 5 s and play back**. VoiceStudio plays back exactly 
 **People in the call can't hear me**
 
 1. In the call app the microphone must be **CABLE Output** (not your real microphone, not "CABLE Input").
-2. In VoiceStudio → **Devices**: the green line must say **Sending your voice to "CABLE Input"**.
+2. In VoiceStudio → **Setup**: the green line must say **Sending your voice to "CABLE Input"** (or your own virtual microphone).
 3. VoiceStudio must be running (tray icon visible) and not muted.
-4. Click **Test virtual microphone** on the Devices page.
+4. Click **Test virtual microphone** on the Setup page.
 
 **There is a yellow "microphone is silenced" warning.**
 Strict voice isolation is on but cannot run yet. Record your voice, or wait a few seconds after starting. If it says isolation is unavailable, switch strict isolation off.
@@ -123,7 +153,7 @@ Strict voice isolation is on but cannot run yet. Record your voice, or wait a fe
 See *What to expect* in section 4. Move the microphone closer to you, move others away, and record your voice again in a quiet room with the microphone you use for calls.
 
 **My voice sounds choppy or has small gaps.**
-Close heavy programs (games, video editing). VoiceStudio adjusts itself if the computer is too busy. Under **Settings → Speed vs. stability**, choose a more stable option.
+Close heavy programs (games, video editing). VoiceStudio adjusts itself if the computer is too busy. Under **Setup → Advanced → Speed vs. stability**, choose a more stable option.
 
 **"CABLE Output" / "CABLE Input" does not appear.**
 Restart Windows after installing. Still missing? Run the setup again with **Install VB-CABLE** ticked, or install it by hand from vb-audio.com/Cable.
@@ -132,17 +162,17 @@ Restart Windows after installing. Still missing? Run the setup again with **Inst
 Turn off **Listen live**, or use headphones instead of speakers.
 
 **After unplugging a headset, the microphone stopped.**
-VoiceStudio reconnects automatically. If it does not, open **Devices** and click your microphone again.
+VoiceStudio reconnects automatically. If it does not, open **Setup** and click your microphone again.
 
 **Still stuck?**
-In **Settings → Help and troubleshooting**, click **Copy diagnostics** and paste it to whoever helps you. It contains settings and device names only, never audio.
+In **Setup → Help and troubleshooting**, click **Copy diagnostics** and paste it to whoever helps you. It contains settings and device names only, never audio.
 
 ---
 
 ## 8. Privacy
 
 * All audio is processed **on your computer** and is never sent anywhere. VoiceStudio does not use the internet.
-* The only audio saved to disk is your **voice sample** for strict isolation (`%LOCALAPPDATA%\VoiceStudio\voice`). **Delete my voice** removes it.
+* The only audio saved to disk is the voice you record on **My Voice**: the full recording and the 3-second sample used by strict isolation (`%LOCALAPPDATA%\VoiceStudio\voice`). **Delete my voice** removes both.
 * Logs contain events and device names only.
 
 ---
@@ -159,4 +189,5 @@ VB-CABLE stays installed (other apps may use it). Remove it separately under *Ap
 * **VB-CABLE** virtual audio cable by VB-Audio Software. Donationware, **vb-cable.com**.
 * **VoxLock** voice isolation model by Arbaz Siddiqui (Apache-2.0).
 * **RNNoise** noise suppression by Xiph.Org (BSD).
+* **Signalsmith Stretch** pitch and formant shifting by Signalsmith Audio (MIT).
 * **ONNX Runtime** by Microsoft (MIT) and **Qt** (LGPL-3.0).

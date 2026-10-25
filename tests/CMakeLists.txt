@@ -11,6 +11,7 @@ add_executable(vs_unit_tests
     unit/test_resampler.cpp
     unit/test_adaptive_reader.cpp
     unit/test_parameters.cpp
+    unit/test_pitch_shifter.cpp
     unit/test_presets.cpp
     unit/test_stats.cpp
     audio/test_processing_chain.cpp

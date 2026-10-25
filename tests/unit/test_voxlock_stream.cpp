@@ -138,7 +138,7 @@ TEST(VoxLockStream, ReportsModelFailure) {
     EXPECT_EQ(stream.push(model, x.data(), 1000, buffer.data()), -1);
 }
 
-TEST(VoxLockEnrollment, FitSamplePicksLoudestThreeSeconds) {
+TEST(VoxLockEnrollment, FitSamplePicksTheSpeech) {
     std::vector<float> audio(16000 * 10, 0.0f);
     const std::vector<float> loud = test::sine(220.0, 16000.0, 16000 * 3, 0.5f);
     std::copy(loud.begin(), loud.end(), audio.begin() + 16000 * 4); // loud part at 4..7 s
@@ -150,6 +150,40 @@ TEST(VoxLockEnrollment, FitSamplePicksLoudestThreeSeconds) {
 
     std::vector<float> tooShort(16000 * 2, 0.1f);
     EXPECT_FALSE(fitSample(tooShort, sample, error));
+}
+
+TEST(VoxLockEnrollment, LongRecordingGivesTypicalSpeechNotTheShout) {
+    // 60 s of speech-like bursts at a normal level, one clipped shout at 40 s and a whisper at 10 s.
+    constexpr std::size_t kRate = 16000;
+    std::vector<float> audio = test::whiteNoise(kRate * 60, 0.08f);
+    for (std::size_t i = 0; i < audio.size(); ++i) {
+        if ((i / 2400) % 4 == 3) {
+            audio[i] *= 0.01f; // pauses between syllables
+        }
+        const double t = static_cast<double>(i) / kRate;
+        if (t >= 40.0 && t < 44.0) {
+            audio[i] = std::clamp(audio[i] * 12.0f, -1.0f, 1.0f); // shout, clipping
+        } else if (t >= 10.0 && t < 14.0) {
+            audio[i] *= 0.1f; // whisper
+        }
+    }
+    std::vector<float> sample;
+    std::string error;
+    ASSERT_TRUE(fitSample(audio, sample, error));
+    ASSERT_EQ(sample.size(), static_cast<std::size_t>(kEnrollSamples));
+    const double level = test::rmsOf(sample);
+    EXPECT_GT(level, 0.04);  // not the whisper
+    EXPECT_LT(level, 0.2);   // not the shout
+    EXPECT_TRUE(validateVoiceSample(audio, error)) << error;
+}
+
+TEST(VoxLockEnrollment, RecordingSavesAsPcm16) {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / L"vs_test_voice_recording.wav";
+    const std::vector<float> x = test::whiteNoise(16000 * 2, 0.1f);
+    std::string error;
+    ASSERT_TRUE(saveRecording(path, x, error)) << error;
+    EXPECT_EQ(std::filesystem::file_size(path), 44u + x.size() * 2);
+    std::filesystem::remove(path);
 }
 
 TEST(VoxLockEnrollment, ValidationRejectsSilenceAndSteadyNoise) {

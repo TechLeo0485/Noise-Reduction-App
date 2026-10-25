@@ -49,8 +49,11 @@ enum class ParamId : std::uint16_t {
     LimiterCeilingDb,
     LimiterReleaseMs,
 
+    // Voice character (see PitchShifter): Depth, Body and Presence.
     PitchEnabled,
     PitchSemitones,
+    PitchBodySt,
+    PitchPresenceDb,
 
     // Strict voice isolation (VoxLock): only the enrolled voice passes; silence otherwise.
     IsolationEnabled,

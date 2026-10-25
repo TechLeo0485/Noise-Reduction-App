@@ -22,6 +22,28 @@ TEST(Presets, ApplyKeepsPerSetupValues) {
     EXPECT_FLOAT_EQ(p.get(ParamId::ClarityDb), 2.0f);
 }
 
+TEST(Presets, ApplyKeepsVoiceCharacter) {
+    EngineParameters p;
+    applyVoiceLook(voiceLooks()[1], p);
+    applyPreset(*findBuiltInPreset("Gaming"), p);
+    EXPECT_TRUE(p.getBool(ParamId::PitchEnabled));
+    EXPECT_EQ(matchVoiceLook(p), &voiceLooks()[1]);
+}
+
+TEST(Presets, VoiceLooks) {
+    EngineParameters p;
+    EXPECT_EQ(matchVoiceLook(p), &voiceLooks().front()); // character off: Natural
+    for (const VoiceLook& look : voiceLooks()) {
+        applyVoiceLook(look, p);
+        EXPECT_EQ(matchVoiceLook(p), &look) << look.key;
+    }
+    applyVoiceLook(voiceLooks().front(), p);
+    EXPECT_FALSE(p.getBool(ParamId::PitchEnabled));
+    p.set(ParamId::PitchEnabled, 1.f);
+    p.set(ParamId::PitchSemitones, -5.f);
+    EXPECT_EQ(matchVoiceLook(p), nullptr); // custom
+}
+
 TEST(Presets, CustomRoundTrip) {
     EngineParameters a;
     a.set(ParamId::BassDb, 4.5f);

@@ -15,17 +15,15 @@ ApplicationWindow {
     color: Theme.background
     font.family: Theme.fontFamily
 
-    // Pages are addressed by key; `index` is the position in the StackLayout below.
+    // Pages are addressed by key; `index` is the position in the StackLayout below. Every control lives on
+    // exactly one page; expert settings sit in collapsed "Fine-tune" / "Technical" sections on that page.
     readonly property var allPages: ({
-        home:        { title: "Home", icon: "\uE80F", subtitle: "Check that everything works and control your voice", index: 0 },
-        sound:       { title: "Sound", icon: "\uE9D9", subtitle: "Noise removal, voice style and tone", index: 1 },
-        noise:       { title: "Noise Reduction", icon: "\uE720", subtitle: "Suppression engine, strength and noise gate in detail", index: 2 },
-        effects:     { title: "Voice Effects", icon: "\uE9E9", subtitle: "Equalizer bands, dynamics, pitch and presets", index: 3 },
-        devices:     { title: "Devices", icon: "\uE7F5", subtitle: "Your microphone, where your voice is sent, and your headphones", index: 4 },
-        performance: { title: "Performance", icon: "\uEC4A", subtitle: "Hardware, processing backend and live measurements", index: 5 },
-        advanced:    { title: "Advanced", icon: "\uE9F5", subtitle: "Buffers, recovery, logging and diagnostics", index: 6 },
-        settings:    { title: "Settings", icon: "\uE713", subtitle: "General options, privacy and help", index: 7 },
-        help:        { title: "Help", icon: "\uE897", subtitle: "How to set up VoiceStudio and use it in your calls", index: 8 }
+        home:    { title: "Home", icon: "\uE80F", subtitle: "Check that everything works and control your voice", index: 0 },
+        voice:   { title: "Voice", icon: "\uE9E9", subtitle: "How you sound: character (deep, strong, warm...) and tone", index: 1 },
+        cleanup: { title: "Clean-up", icon: "\uE9D9", subtitle: "Remove background noise and other people's voices", index: 2 },
+        myvoice: { title: "My Voice", icon: "\uE720", subtitle: "Record your voice so VoiceStudio knows it is you", index: 3 },
+        setup:   { title: "Setup", icon: "\uE713", subtitle: "Microphone, virtual microphone, headphones and settings", index: 4 },
+        help:    { title: "Help", icon: "\uE897", subtitle: "How to set up VoiceStudio and use it in your calls", index: 5 }
     })
     // Opens a page by key (used by C++, e.g. the "User Guide" shortcut opens "help").
     function showPage(key) {
@@ -42,11 +40,8 @@ ApplicationWindow {
         }
     }
 
-    readonly property var navKeys: backend.advancedUi
-        ? ["home", "sound", "noise", "effects", "devices", "performance", "advanced", "settings", "help"]
-        : ["home", "sound", "devices", "settings", "help"]
+    readonly property var navKeys: ["home", "voice", "cleanup", "myvoice", "setup", "help"]
     property string currentKey: "home"
-    // Falls back to Home if the current page disappears (e.g. advanced controls turned off).
     readonly property var currentInfo: allPages[navKeys.indexOf(currentKey) >= 0 ? currentKey : "home"]
 
     RowLayout {
@@ -85,7 +80,7 @@ ApplicationWindow {
                     ColumnLayout {
                         spacing: 0
                         Text { text: "VoiceStudio"; color: Theme.text; font.pixelSize: 17; font.weight: Font.Bold }
-                        Text { text: "Local AI voice processing"; color: Theme.textSecondary; font.pixelSize: 11 }
+                        Text { text: "Clean, strong voice for every call"; color: Theme.textSecondary; font.pixelSize: 11 }
                     }
                 }
 
@@ -238,8 +233,8 @@ ApplicationWindow {
                     text: {
                         if (backend.engineState === "Error" || backend.engineState === "Recovering")
                             return backend.engineMessage
-                        // On Home (simple mode) the setup checklist already explains routing problems.
-                        if (!backend.advancedUi && window.currentInfo === window.allPages.home)
+                        // Home and Setup explain routing problems themselves.
+                        if (window.currentInfo === window.allPages.home || window.currentInfo === window.allPages.setup)
                             return ""
                         if (backend.engineState === "Running (no output)")
                             return backend.engineMessage
@@ -253,15 +248,12 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 currentIndex: window.currentInfo.index
 
-                HomeScreen {}            // 0
-                SoundScreen {}           // 1
-                NoiseReductionScreen {}  // 2
-                VoiceEffectsScreen {}    // 3
-                DevicesScreen {}         // 4
-                PerformanceScreen {}     // 5
-                AdvancedScreen {}        // 6
-                SettingsScreen {}        // 7
-                HelpScreen {}            // 8
+                HomeScreen { onOpenPage: (key) => window.showPage(key) }    // 0
+                VoiceScreen {}                                              // 1
+                CleanupScreen { onOpenPage: (key) => window.showPage(key) } // 2
+                MyVoiceScreen {}                                            // 3
+                SetupScreen {}                                              // 4
+                HelpScreen {}                                               // 5
             }
         }
     }

@@ -1,44 +1,61 @@
 #pragma once
 
+#include "dsp/Biquad.h"
 #include "dsp/IAudioProcessor.h"
 
 #include <memory>
+#include <vector>
 
 namespace vs {
 
-// Low-latency time-domain pitch shifter (dual modulated delay taps with sine crossfade).
+// Voice character: formant-preserving pitch shift (Signalsmith Stretch) plus a little tone shaping.
 //
-// Chosen over phase-vocoder / PSOLA approaches because its latency is small and constant
-// (about half the window, ~12 ms at the default 25 ms window). It produces some audible
-// modulation on large shifts, which is why it is disabled by default and kept as an optional
-// effect. Enable/disable is crossfaded over one block.
+//   Depth    (PitchSemitones)  - pitch in semitones. Formants stay where they are, so a lower voice
+//                                sounds deeper instead of boomy and muffled.
+//   Body     (PitchBodySt)     - moves the formants down (positive: a bigger, thicker voice) or up.
+//   Presence (PitchPresenceDb) - a 3 kHz lift that keeps a deeper voice clear and forward.
+//
+// A 70 Hz high-pass after the shift removes the sub-bass a lower pitch pushes under the voice.
+// Latency is about 35 ms while active and zero while bypassed (disabled, or nothing to change).
+// Starting waits until the shifter has valid output, then crossfades over one block; stopping crossfades back.
 class PitchShifter final : public IAudioProcessor {
 public:
-    [[nodiscard]] const char* name() const noexcept override { return "Pitch"; }
+    PitchShifter();
+    ~PitchShifter() override;
+    PitchShifter(const PitchShifter&) = delete;
+    PitchShifter& operator=(const PitchShifter&) = delete;
+
+    [[nodiscard]] const char* name() const noexcept override { return "Voice character"; }
     void prepare(float sampleRate, std::size_t maxBlockSize) override;
     void reset() noexcept override;
     void updateParameters(const EngineParameters& params) noexcept override;
     void process(float* samples, std::size_t count) noexcept override;
     [[nodiscard]] int latencySamples() const noexcept override;
 
-    void configure(bool enabled, float semitones) noexcept;
+    void configure(bool enabled, float semitones, float bodySemitones = 0.0f, float presenceDb = 0.0f) noexcept;
 
 private:
-    [[nodiscard]] float readDelayed(float delaySamples) const noexcept;
+    struct Engine;
 
-    static constexpr std::size_t kBufferSize = 8192; // power of two
-    static constexpr std::size_t kMask = kBufferSize - 1;
+    void applySettings() noexcept;
 
+    std::unique_ptr<Engine> engine_;
+    std::vector<float> input_;
     float sampleRate_ = 48000.0f;
-    float windowSamples_ = 1200.0f;
-    float minDelay_ = 32.0f;
-    bool enabled_ = false;
-    float ratio_ = 1.0f;
+    int latency_ = 0;
 
-    std::unique_ptr<float[]> buffer_;
-    std::size_t writePos_ = 0;
-    float phase_ = 0.0f;
-    float mix_ = 0.0f;
+    bool enabled_ = false;
+    float semitones_ = 0.0f;
+    float body_ = 0.0f;
+    float presenceDb_ = 0.0f;
+    bool dirty_ = true;
+
+    bool active_ = false; // the shifter is running (warming up or audible)
+    int warmup_ = 0;      // samples until the wet output is valid after a start
+    float mix_ = 0.0f;    // 0 = dry, 1 = wet
+
+    Biquad lowCut_;
+    Biquad presence_;
 };
 
 } // namespace vs

@@ -18,9 +18,31 @@ struct Preset {
     ParamValues values; // overrides on top of defaults for preset-scoped parameters
 };
 
-// Parameters a preset controls. Microphone gain, master mute, monitor volume and strict voice
-// isolation are per-setup values and are deliberately left untouched when switching presets.
+// Parameters a preset controls. Microphone gain, master mute, monitor volume, strict voice isolation
+// and the voice character are per-user values and are deliberately left untouched when switching presets.
 [[nodiscard]] bool isPresetScoped(ParamId id) noexcept;
+
+[[nodiscard]] constexpr bool isVoiceCharacterParam(ParamId id) noexcept {
+    return id == ParamId::PitchEnabled || id == ParamId::PitchSemitones || id == ParamId::PitchBodySt ||
+           id == ParamId::PitchPresenceDb;
+}
+
+// A ready-made voice character ("look"): depth, body and presence. Applied on top of any preset.
+struct VoiceLook {
+    const char* key;
+    const char* label;
+    const char* description;
+    float depthSt;
+    float bodySt;
+    float presenceDb;
+};
+
+// "natural" first (character off); the others switch it on.
+[[nodiscard]] const std::vector<VoiceLook>& voiceLooks();
+// Sets the voice-character parameters to the look (Natural switches the character off).
+void applyVoiceLook(const VoiceLook& look, EngineParameters& params);
+// The look the current values match, or nullptr (custom).
+[[nodiscard]] const VoiceLook* matchVoiceLook(const EngineParameters& params);
 
 [[nodiscard]] const std::vector<Preset>& builtInPresets();
 [[nodiscard]] const Preset* findBuiltInPreset(const std::string& name);

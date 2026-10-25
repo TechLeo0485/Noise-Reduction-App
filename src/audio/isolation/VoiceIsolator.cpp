@@ -18,6 +18,8 @@ namespace {
 
 constexpr std::size_t kFrameSizeConst = VoiceIsolator::kFrameSize;
 constexpr std::size_t kRingCapacity = 48000;   // 1 s at 48 kHz in each direction
+constexpr std::size_t kRecordRingCapacity = 48000 * 5; // enrollment recording: 5 s between pumpRecording() calls
+constexpr std::size_t kRecordChunk = 4800;     // 48 kHz samples resampled at a time while recording
 constexpr std::size_t kWorkerBlock = 960;      // 48 kHz samples taken from the input ring at a time
 constexpr int kMaxPush16 = 1024;               // 16 kHz samples per Stream::push
 constexpr std::size_t kMaxStreamOutput = 4096; // >= Stream::maxOutputSamples() for K <= 8
@@ -81,7 +83,7 @@ private:
 
 VoiceIsolator::VoiceIsolator()
     : in48_(kWorkerBlock), buf16_(kMaxPush16), out16_(kMaxStreamOutput), out48_(kMaxStreamOutput * 3 + 64),
-      inRing_(kRingCapacity), outRing_(kRingCapacity), recordBuffer_(kRecordMaxSamples, 0.0f) {
+      inRing_(kRingCapacity), outRing_(kRingCapacity), recordRing_(kRecordRingCapacity), recordChunk_(kRecordChunk) {
     down_.configure(kSampleRate, voxlock::kSampleRate, kWorkerBlock, kDownHalfTaps);
     up_.configure(voxlock::kSampleRate, kSampleRate, kMaxStreamOutput, kUpHalfTaps);
 #if !defined(VOICESTUDIO_HAS_VOXLOCK)
@@ -276,10 +278,16 @@ void VoiceIsolator::enroll(std::vector<float> audio16k, std::string microphone) 
             setStatus(before, "Voice enrollment failed: " + error, false);
             return;
         }
-        if (!enrollmentFile_.empty() && !voxlock::saveVoiceSample(enrollmentFile_, audio, error)) {
+        // Saved: the 3 s the model uses (loads exactly as enrolled) and, for the user, the whole recording.
+        std::vector<float> sample;
+        voxlock::fitSample(audio, sample, error);
+        if (!enrollmentFile_.empty() && !voxlock::saveVoiceSample(enrollmentFile_, sample, error)) {
             logError("Saving the voice sample failed: " + error);
             setStatus(IsolationState::Ready, "Isolating your voice, but it could not be saved for next time: " + error, false);
             return;
+        }
+        if (!enrollmentFile_.empty() && audio.size() > sample.size() && !voxlock::saveRecording(recordingFile(), audio, error)) {
+            logWarning("Saving the full voice recording failed: " + error);
         }
         if (!enrollmentFile_.empty()) {
             std::ofstream(microphoneFile(), std::ios::trunc) << microphone << '\n';
@@ -301,6 +309,7 @@ void VoiceIsolator::deleteEnrollment() {
             std::filesystem::remove(enrollmentFile_, ec);
             std::error_code ignored;
             std::filesystem::remove(microphoneFile(), ignored);
+            std::filesystem::remove(recordingFile(), ignored);
         }
         tensors_ = {};
         haveTensors_ = false;
@@ -438,6 +447,10 @@ bool VoiceIsolator::prepareVoice(const std::vector<float>& audio16k, std::string
 #endif
 }
 
+std::filesystem::path VoiceIsolator::recordingFile() const {
+    return enrollmentFile_.parent_path() / L"my_voice_recording.wav";
+}
+
 std::filesystem::path VoiceIsolator::microphoneFile() const {
     std::filesystem::path path = enrollmentFile_;
     path += L".microphone.txt";
@@ -518,21 +531,37 @@ void VoiceIsolator::monitor() {
 
 // ---- Enrollment recording ------------------------------------------------------------------------------
 
-bool VoiceIsolator::startRecording(double seconds) noexcept {
+bool VoiceIsolator::startRecording(double maxSeconds) {
     if (recordingState() == RecordingState::Recording) {
         return false;
     }
-    const auto length = std::clamp<std::size_t>(static_cast<std::size_t>(seconds * kSampleRate),
-                                                static_cast<std::size_t>(kSampleRate) * 3, kRecordMaxSamples);
+    const auto length = std::clamp<std::size_t>(static_cast<std::size_t>(maxSeconds * kSampleRate),
+                                                static_cast<std::size_t>(kSampleRate) * 3,
+                                                static_cast<std::size_t>(kRecordMaxSeconds * kSampleRate));
+    // The capture thread only pushes while Recording, so the ring has no producer here.
+    recordRing_.skip(recordRing_.available());
+    recordResampler_.configure(kSampleRate, voxlock::kSampleRate, kRecordChunk + kDownHalfTaps + 16, kDownHalfTaps);
+    recorded16k_.clear();
+    recorded16k_.reserve(static_cast<std::size_t>(voxlock::kSampleRate) * 60);
     recordLength_.store(length, std::memory_order_relaxed);
     recordPosition_.store(0, std::memory_order_relaxed);
+    recordDropped_.store(0, std::memory_order_relaxed);
     recordPeak_.store(0.0f, std::memory_order_relaxed);
     recordState_.store(static_cast<int>(RecordingState::Recording), std::memory_order_release);
     return true;
 }
 
+void VoiceIsolator::stopRecording() noexcept {
+    int expected = static_cast<int>(RecordingState::Recording);
+    recordState_.compare_exchange_strong(expected, static_cast<int>(RecordingState::Ready), std::memory_order_acq_rel);
+}
+
 void VoiceIsolator::cancelRecording() noexcept {
     recordState_.store(static_cast<int>(RecordingState::Idle), std::memory_order_release);
+}
+
+double VoiceIsolator::recordingSeconds() const noexcept {
+    return static_cast<double>(recordPosition_.load(std::memory_order_relaxed)) / kSampleRate;
 }
 
 float VoiceIsolator::recordingProgress() const noexcept {
@@ -540,19 +569,40 @@ float VoiceIsolator::recordingProgress() const noexcept {
     return length > 0 ? static_cast<float>(recordPosition_.load(std::memory_order_relaxed)) / static_cast<float>(length) : 0.0f;
 }
 
+void VoiceIsolator::pumpRecording() {
+    if (recordingState() == RecordingState::Idle || !recordResampler_.isConfigured()) {
+        return;
+    }
+    std::vector<float> out16(kRecordChunk / 3 + 16);
+    for (;;) {
+        const std::size_t room = std::min(recordChunk_.size(), recordResampler_.freeInputSpace());
+        const std::size_t n = recordRing_.pop(recordChunk_.data(), room);
+        if (n == 0) {
+            break;
+        }
+        recordResampler_.write(recordChunk_.data(), n);
+        const std::size_t produced = recordResampler_.read(out16.data(), out16.size());
+        recorded16k_.insert(recorded16k_.end(), out16.begin(), out16.begin() + static_cast<std::ptrdiff_t>(produced));
+    }
+}
+
 std::vector<float> VoiceIsolator::takeRecording16k() {
     std::vector<float> out;
     if (recordingState() != RecordingState::Ready) { // acquire: the capture thread's writes are visible
         return out;
     }
-    const std::size_t n = recordPosition_.load(std::memory_order_relaxed);
-    Resampler resampler;
-    resampler.configure(kSampleRate, voxlock::kSampleRate, n + kDownHalfTaps + 16, kDownHalfTaps);
-    resampler.write(recordBuffer_.data(), n);
-    const std::vector<float> tail(kDownHalfTaps + 4, 0.0f); // flush the filter look-ahead
-    resampler.write(tail.data(), tail.size());
-    out.resize(n / 3 + 8);
-    out.resize(std::min(resampler.read(out.data(), out.size()), n / 3));
+    pumpRecording();
+    // Flush the anti-alias filter's look-ahead so the last millisecond is not lost.
+    const std::vector<float> tail(kDownHalfTaps + 4, 0.0f);
+    recordResampler_.write(tail.data(), tail.size());
+    std::vector<float> rest(tail.size());
+    const std::size_t produced = recordResampler_.read(rest.data(), rest.size());
+    recorded16k_.insert(recorded16k_.end(), rest.begin(), rest.begin() + static_cast<std::ptrdiff_t>(produced));
+    const std::size_t expected = recordPosition_.load(std::memory_order_relaxed) / 3;
+    if (recorded16k_.size() > expected) {
+        recorded16k_.resize(expected);
+    }
+    out.swap(recorded16k_);
     recordState_.store(static_cast<int>(RecordingState::Idle), std::memory_order_release);
     return out;
 }
@@ -586,7 +636,9 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
         const std::size_t length = recordLength_.load(std::memory_order_relaxed);
         const std::size_t position = recordPosition_.load(std::memory_order_relaxed);
         const std::size_t take = std::min(n, length - std::min(position, length));
-        std::memcpy(recordBuffer_.data() + position, frame, take * sizeof(float));
+        if (!recordRing_.tryPush(frame, take)) {
+            recordDropped_.fetch_add(take, std::memory_order_relaxed);
+        }
         float peak = recordPeak_.load(std::memory_order_relaxed) * 0.97f;
         for (std::size_t i = 0; i < take; ++i) {
             peak = std::max(peak, std::fabs(frame[i]));

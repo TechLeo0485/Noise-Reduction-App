@@ -226,6 +226,30 @@ TEST(VoiceIsolator, RecordingCapturesFramesAndResamplesTo16k) {
     EXPECT_EQ(isolator.recordingState(), VoiceIsolator::RecordingState::Idle);
 }
 
+TEST(VoiceIsolator, LongRecordingRunsUntilStopped) {
+    // Longer than the old 20 s cap and the 5 s ring: only works because pumpRecording() drains as it goes.
+    VoiceIsolator isolator;
+    ASSERT_TRUE(isolator.startRecording());
+    std::vector<float> frame(kFrame);
+    for (int f = 0; f < 100 * 45; ++f) { // 45 s
+        const std::vector<float> x = test::sine(500.0, 48000.0, kFrame, 0.3f);
+        frame = x;
+        IsolationFrameInfo info;
+        isolator.process(frame.data(), false, info);
+        if (f % 10 == 0) {
+            isolator.pumpRecording();
+        }
+    }
+    EXPECT_EQ(isolator.recordingState(), VoiceIsolator::RecordingState::Recording);
+    EXPECT_NEAR(isolator.recordingSeconds(), 45.0, 0.01);
+    isolator.stopRecording();
+    ASSERT_EQ(isolator.recordingState(), VoiceIsolator::RecordingState::Ready);
+    const std::vector<float> y = isolator.takeRecording16k();
+    EXPECT_NEAR(static_cast<double>(y.size()), 16000.0 * 45, 4.0);
+    EXPECT_EQ(isolator.recordingDropped(), 0u);
+    EXPECT_EQ(isolator.recordingState(), VoiceIsolator::RecordingState::Idle);
+}
+
 TEST(Parameters, IsolationIsOffByDefaultAndNotPresetScoped) {
     EngineParameters p;
     EXPECT_FALSE(p.getBool(ParamId::IsolationEnabled));
