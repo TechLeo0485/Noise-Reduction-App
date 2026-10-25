@@ -15,7 +15,8 @@ namespace vs {
 //   Body     (PitchBodySt)     - moves the formants down (positive: a bigger, thicker voice) or up.
 //   Presence (PitchPresenceDb) - a 3 kHz lift that keeps a deeper voice clear and forward.
 //
-// A 70 Hz high-pass after the shift removes the sub-bass a lower pitch pushes under the voice.
+// After the shift, a 90 Hz high-pass and an "anti-boom" low shelf (below ~150 Hz) keep a lower voice strong and
+// thick instead of bassy: the shelf cuts 1 dB per semitone lower plus 0.5 dB per semitone of body (up to 7 dB).
 // Latency is about 35 ms while active and zero while bypassed (disabled, or nothing to change).
 // Starting waits until the shifter has valid output, then crossfades over one block; stopping crossfades back.
 class PitchShifter final : public IAudioProcessor {
@@ -55,6 +56,7 @@ private:
     float mix_ = 0.0f;    // 0 = dry, 1 = wet
 
     Biquad lowCut_;
+    Biquad antiBoom_;
     Biquad presence_;
 };
 

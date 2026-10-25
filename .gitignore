@@ -44,3 +44,9 @@ __pycache__/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Driver build: NuGet WDK/SDK packages and MSBuild intermediates (scripts/build-driver.ps1)
+driver/packages/
+driver/**/x64/
+# Never commit a driver-signing private key
+*.pfx

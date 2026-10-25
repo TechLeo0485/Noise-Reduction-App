@@ -34,12 +34,12 @@ The checklist disappears once everything is green.
 
 | Page | What it is for |
 |---|---|
-| **Home** | Is everything working, mute, microphone volume, quick voice character and noise level, hear yourself |
-| **Voice** | How you sound: voice character (deep, strong, warm...) and tone |
-| **Clean-up** | Background noise, *Only send my voice*, and ready-made settings per situation |
-| **My Voice** | Record your voice (as long as you like) |
-| **Setup** | Microphone, virtual microphone, headphones, general settings; *Advanced* holds speed, buffers, measurements and logging |
+| **Home** | Is everything working, microphone volume, hear yourself, and the three everyday choices: how you **sound like**, **background noise** level, **only my voice** |
+| **Voice** | Fine-tune how you sound: depth, body, presence and tone |
+| **Clean-up** | *Only send my voice* and recording your voice, background noise details, ready-made settings per situation |
+| **Setup** | Microphone, virtual microphone, headphones, general settings, help; *Advanced* holds speed, buffers, measurements and logging |
 
+The sidebar holds the **On/Off** button for VoiceStudio, **Mute microphone** and **Help and user guide**.
 Expert settings sit under **Fine-tune** on the page they belong to. Click it to open.
 
 ### Choosing your microphone (Setup page)
@@ -47,7 +47,15 @@ Expert settings sit under **Fine-tune** on the page they belong to. Click it to 
 * **1. Your microphone**: click the microphone you speak into. A green bar under it shows **"Hearing you"** when you talk.
   *Windows default microphone* follows whatever Windows uses.
 * **2. Send your voice to apps**: should say **✓ Sending your voice to "CABLE Input"** (or your own virtual microphone). If not, click **Use virtual microphone**.
-* **3. Headphones** (optional): turn on **Listen live** to hear yourself. Use headphones, not speakers, or you get an echo.
+* **3. Headphones** (optional): where you hear yourself. Turn on **Listen live** on Home. Use headphones, not speakers, or you get an echo.
+
+### VoiceStudio Virtual Microphone (instead of VB-CABLE)
+
+Setup can also install VoiceStudio's own free virtual microphone (task *Install the VoiceStudio Virtual Microphone*).
+It is a test-signed driver, so it only works in **Windows Test Mode**, which needs **Secure Boot turned off** in the
+PC's firmware settings. Setup explains this and asks before turning Test Mode on. Once installed, VoiceStudio sends
+your voice to **VoiceStudio Mic Feed** by itself; in Discord, OBS, games or Windows pick
+**VoiceStudio Virtual Microphone**. Details and risks: `driver/README.md`.
 
 ### Using your own virtual microphone
 
@@ -59,7 +67,7 @@ the **playback side** (VoiceStudio sends your voice there) and the **recording s
 
 ## 3. Use it in your call app
 
-In your call app, pick **CABLE Output** as the **microphone** (with your own virtual microphone: its recording side):
+In your call app, pick **CABLE Output** as the **microphone** (with your own virtual microphone: its recording side). Home shows the exact name to pick once everything is set up:
 
 | App | Where |
 |---|---|
@@ -79,15 +87,20 @@ Your speakers and headphones in the call app stay unchanged.
 
 This is for situations like a job interview where others may talk in the same room.
 
-1. Go to **My Voice** and click **Start recording**.
+1. Go to **Clean-up** and click **Start recording** (card *My voice*).
 2. Follow the guide on screen. It changes every 20 seconds: **normal**, **louder**, **quiet**, **higher**, **lower**, **with feeling**, then **free talk**.
    Talk as long as you like (1 to 3 minutes works great, up to 30 minutes), then click **Done**.
    * Be **alone and in a quiet room** while recording.
    * Use the **same microphone** you will use in the call.
-3. On **Clean-up**, turn on **Strict voice isolation** (card *Only send my voice*).
+3. Turn on **Strict voice isolation** (card *Only send my voice*, on Clean-up or Home).
 
-VoiceStudio picks your clearest everyday speech from the recording to recognise you, so loud or quiet parts never confuse it.
-The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** on the My Voice page to find it.
+The network that recognises you listens to 3 seconds of your voice. After you click **Done**, VoiceStudio tries several 3-second
+samples from different parts of your recording (normal, loud, quiet, high, low...) on the rest of your recording and keeps the
+one that keeps the most of your voice in **every** style. This takes up to about half a minute; your current voice keeps working meanwhile.
+
+**Add more** records more and adds it to what you already recorded. The guide continues with the styles you have not recorded yet,
+and the *My voice* card shows which styles are covered. **Start over** replaces the recording.
+The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** on the *My voice* card to find it.
 
 ### What to expect
 
@@ -105,22 +118,24 @@ The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** 
 * Your voice reaches the other side about **0.08 seconds later** while isolation is on. That's not noticeable in conversation.
 * **Safety first:** while isolation is on, VoiceStudio never sends your raw microphone. If isolation cannot run (for example right after starting, or without a recorded voice), your microphone is **silenced** and a yellow warning explains why.
 * If you switch to a **different microphone**, VoiceStudio reminds you to record your voice again.
-* **Re-record** any time. **Delete my voice** removes the recording from your computer.
+* **Add more** or **Start over** any time. **Delete** removes the recording from your computer.
 
 ---
 
 ## 5. Sound settings
 
-* **Voice character** (Home or Voice): **Natural**, **Deep & Strong**, **Warm** or **Radio**. On the Voice page you can fine-tune:
-  * **Depth**: a lower (or higher) pitch. Your voice keeps its own tone, so it sounds deeper and stronger, not boomy or robotic.
+* **Sound like** (Home): **Natural**, **Strong & Thick**, **Deep**, **Warm** or **Radio**. On the Voice page you can fine-tune:
+  * **Depth**: a lower (or higher) pitch. Your voice keeps its own tone, so it sounds deeper and stronger, not robotic.
   * **Body**: a thicker, bigger voice. Move it left for a lighter voice.
   * **Presence**: keeps a deeper voice clear and forward.
 
-  For a strong, thick voice: 2 to 4 steps of Depth and a little Body. Voice character adds about 35 ms of delay while it is on, and none when it is set to Natural.
-* **Noise removal** (Home or Clean-up): *Off*, *Light*, *Balanced* or *Strong*. *Balanced* suits most rooms.
+  A lower voice would normally pile up bass and sound boomy; VoiceStudio holds the bass back automatically (more the deeper you go),
+  so it sounds strong and thick instead. For strong and thick: 1 to 2 steps of Depth and some Body (that is *Strong & Thick*).
+  Voice character adds about 35 ms of delay while it is on, and none when it is set to Natural.
+* **Background noise** (Home): *Off*, *Light*, *Balanced* or *Strong*. *Balanced* suits most rooms. Details are on Clean-up.
 * **Situation** (Clean-up): ready-made noise and tone settings such as **Interview**, **Natural Voice**, **Gaming** and **Streaming**. Your voice character is kept when you switch.
 * **Microphone volume** (Home): aim for the meter to reach the middle when you speak normally.
-* **Mute**: the big button on Home, or right-click the tray icon → **Mute microphone**.
+* **Mute**: **Mute microphone** in the sidebar, or right-click the tray icon → **Mute microphone**.
 
 ### Check how you sound
 
@@ -172,7 +187,7 @@ In **Setup → Help and troubleshooting**, click **Copy diagnostics** and paste 
 ## 8. Privacy
 
 * All audio is processed **on your computer** and is never sent anywhere. VoiceStudio does not use the internet.
-* The only audio saved to disk is the voice you record on **My Voice**: the full recording and the 3-second sample used by strict isolation (`%LOCALAPPDATA%\VoiceStudio\voice`). **Delete my voice** removes both.
+* The only audio saved to disk is the voice you record on **Clean-up** (card *My voice*): the full recording and the 3-second sample used by strict isolation (`%LOCALAPPDATA%\VoiceStudio\voice`). **Delete** removes both.
 * Logs contain events and device names only.
 
 ---

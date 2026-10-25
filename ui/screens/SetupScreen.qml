@@ -8,6 +8,8 @@ import VoiceStudio
 ScreenPage {
     id: page
 
+    signal openPage(string key)
+
     property bool showVirtualMics: false
     property bool changeOutput: false
 
@@ -121,14 +123,8 @@ ScreenPage {
 
             Card {
                 title: "3. Headphones (optional)"
-                subtitle: "Hear yourself. Use headphones: through speakers your microphone picks it up again and echoes."
+                subtitle: "Where you hear yourself (Listen live on Home) and voice checks. Use headphones, not speakers."
                 icon: ""
-                VsSwitch {
-                    label: "Listen live"
-                    checked: backend.monitorEnabled
-                    onToggled: (value) => backend.monitorEnabled = value
-                }
-                Text { text: "Headphones (also used for voice check playback)"; color: Theme.textSecondary; font.pixelSize: 12 }
                 VsComboBox {
                     Layout.fillWidth: true
                     model: backend.outputDevices
@@ -176,7 +172,7 @@ ScreenPage {
                     color: Theme.textSecondary
                     font.pixelSize: 11
                     text: "Privacy: everything runs on this computer. Nothing is uploaded, there is no account or tracking. "
-                          + "Only the voice you record on the My Voice page is saved, in its own folder."
+                          + "Only the voice you record on the Clean-up page is saved, in its own folder."
                 }
             }
         ]
@@ -215,14 +211,53 @@ ScreenPage {
                             Layout.fillWidth: true
                             textFormat: Text.StyledText
                             text: page.su.outputOk
-                                  ? "In Zoom, Teams, Discord or Meet, pick the other side of this virtual microphone as the "
-                                    + "microphone (for VB-CABLE: <b>CABLE Output</b>)."
+                                  ? "In Zoom, Teams, Discord or Meet, choose <b>" + page.su.appMicName + "</b> as the microphone."
                                   : !page.su.cableInstalled
                                     ? "Install VB-CABLE (free) and restart Windows, or mark your own virtual microphone below."
                                     : "Other apps cannot hear you. Click <b>Use virtual microphone</b>."
                             color: Theme.textSecondary
                             font.pixelSize: 12
                             wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                // VoiceStudio's own driver installed but not running: say why and what to do.
+                Rectangle {
+                    readonly property string vm: page.su.virtualMic !== undefined ? page.su.virtualMic : "notInstalled"
+                    visible: vm !== "notInstalled" && vm !== "running"
+                    Layout.fillWidth: true
+                    implicitHeight: vmText.implicitHeight + 24
+                    radius: Theme.radiusSmall
+                    color: "#2A2210"
+                    border.color: Theme.warning
+                    Text {
+                        id: vmText
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        wrapMode: Text.WordWrap
+                        textFormat: Text.StyledText
+                        color: Theme.text
+                        font.pixelSize: 12
+                        text: {
+                            const st = parent.vm
+                            const head = "<b>VoiceStudio Virtual Microphone is installed, but not working yet.</b><br>"
+                            if (st === "notStarted")
+                                return head + "Restart Windows to finish installing it."
+                            if (st === "problem")
+                                return head + "Windows reports problem code " + page.su.virtualMicProblem
+                                       + ". Restart Windows; if it stays, run VoiceStudio setup again."
+                            // blocked: the test-signed driver is not allowed to load
+                            if (page.su.secureBoot === true)
+                                return head + "It is a free test-signed driver, which Windows only runs in <b>Test Mode</b> - "
+                                       + "and Test Mode needs <b>Secure Boot turned off</b>, which is on on this PC. Turn Secure "
+                                       + "Boot off in your PC's UEFI/BIOS settings, then run VoiceStudio setup again and allow "
+                                       + "Test Mode. Until then, use VB-CABLE."
+                            if (page.su.testMode !== true)
+                                return head + "It is a free test-signed driver, which Windows only runs in <b>Test Mode</b>, and "
+                                       + "Test Mode is off. Run VoiceStudio setup again and allow Test Mode, then restart."
+                            return head + "Test Mode is on, but Windows does not trust the driver's certificate. Run "
+                                   + "VoiceStudio setup again (it installs the certificate), then restart."
                         }
                     }
                 }
@@ -314,6 +349,7 @@ ScreenPage {
                 icon: ""
                 RowLayout {
                     spacing: 8
+                    VsButton { text: "Open user guide"; primary: true; onClicked: page.openPage("help") }
                     VsButton { text: "Open log folder"; onClicked: backend.openLogFolder() }
                     VsButton {
                         text: copied.running ? "Copied" : "Copy diagnostics"

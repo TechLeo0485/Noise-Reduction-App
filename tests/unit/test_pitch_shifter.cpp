@@ -72,6 +72,38 @@ double centroid(const std::vector<float>& x, std::size_t start, std::size_t leng
     return num / den;
 }
 
+// A chest voice: like vowel(), but with the strong fundamental and low harmonics of a real voice
+// (source roll-off of about 6 dB per octave).
+std::vector<float> chestVowel(double f0, std::size_t count) {
+    std::vector<float> x(count, 0.0f);
+    for (int k = 1; k * f0 < 6000.0; ++k) {
+        const double f = k * f0;
+        const double env = 1.0 / (1.0 + std::pow((f - 700.0) / 120.0, 2)) +
+                           0.6 / (1.0 + std::pow((f - 1200.0) / 150.0, 2)) + 0.3;
+        for (std::size_t i = 0; i < count; ++i) {
+            x[i] += static_cast<float>(0.08 * env / k * std::sin(test::kTwoPi * f * static_cast<double>(i) / kRate + k));
+        }
+    }
+    return x;
+}
+
+// Energy between lo and hi Hz (Hann-windowed DFT, 5 Hz steps).
+double bandEnergy(const std::vector<float>& x, std::size_t start, std::size_t length, double lo, double hi) {
+    double sum = 0.0;
+    for (double f = lo; f <= hi; f += 5.0) {
+        double re = 0.0;
+        double im = 0.0;
+        for (std::size_t i = 0; i < length; ++i) {
+            const double w = 0.5 - 0.5 * std::cos(test::kTwoPi * static_cast<double>(i) / static_cast<double>(length));
+            const double ph = test::kTwoPi * f * static_cast<double>(i) / kRate;
+            re += w * x[start + i] * std::cos(ph);
+            im -= w * x[start + i] * std::sin(ph);
+        }
+        sum += re * re + im * im;
+    }
+    return sum;
+}
+
 } // namespace
 
 TEST(PitchShifter, BypassedIsTransparentWithoutLatency) {
@@ -137,4 +169,20 @@ TEST(PitchShifter, ToggleIsClickFreeAndFinite) {
         }
     }
     EXPECT_LT(maxJump, 0.5f);
+}
+
+TEST(PitchShifter, DeeperVoiceDoesNotGetBoomy) {
+    // Lowering a 150 Hz voice puts its fundamental under 150 Hz. The share of energy down there (bass) must not
+    // grow compared with the original voice: deeper and thicker, not boomier.
+    PitchShifter shifter;
+    shifter.prepare(static_cast<float>(kRate), kBlock);
+    shifter.configure(true, -3.0f, 1.5f, 3.0f);
+    const std::vector<float> in = chestVowel(150.0, 96000);
+    const std::vector<float> out = run(shifter, in);
+    const auto bassShare = [](const std::vector<float>& x) {
+        return bandEnergy(x, 48000, 8192, 60.0, 155.0) / bandEnergy(x, 48000, 8192, 60.0, 4000.0);
+    };
+    // Without the anti-boom shelf the share grows by about a third (0.35 -> 0.46). It must also not go thin.
+    EXPECT_LE(bassShare(out), bassShare(in) * 1.1) << bassShare(in) << " -> " << bassShare(out);
+    EXPECT_GE(bassShare(out), bassShare(in) * 0.6) << bassShare(in) << " -> " << bassShare(out);
 }

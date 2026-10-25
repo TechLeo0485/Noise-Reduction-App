@@ -196,6 +196,7 @@ void EngineController::refreshDevices() {
     }
     inputDeviceInfos_ = deviceManager_->enumerate(DeviceFlow::Capture);
     outputDeviceInfos_ = deviceManager_->enumerate(DeviceFlow::Render);
+    virtualMic_ = queryVirtualMicDriver();
     // Devices the user marked as virtual (their own virtual microphone driver) count as cables everywhere.
     for (auto* list : {&inputDeviceInfos_, &outputDeviceInfos_}) {
         for (AudioDeviceInfo& d : *list) {
@@ -276,15 +277,29 @@ const AudioDeviceInfo* EngineController::suggestedMicrophone() const {
     return first;
 }
 
+const AudioDeviceInfo* EngineController::voiceStudioFeed() const {
+    for (const AudioDeviceInfo& d : outputDeviceInfos_) {
+        if (containsCi(d.name, L"voicestudio mic feed")) {
+            return &d;
+        }
+    }
+    return nullptr;
+}
+
 const AudioDeviceInfo* EngineController::suggestedOutput() const {
-    // The virtual microphone's playback side: a device the user marked first, then VB-CABLE's
-    // "CABLE Input", then any other virtual playback device.
+    // The virtual microphone's playback side: a device the user marked first, then VoiceStudio's own
+    // "VoiceStudio Mic Feed", then VB-CABLE's "CABLE Input", then any other virtual playback device.
     const AudioDeviceInfo* cable = nullptr;
     const AudioDeviceInfo* other = nullptr;
     for (const AudioDeviceInfo& d : outputDeviceInfos_) {
         if (isUserVirtual(d.id)) {
             return &d;
         }
+    }
+    if (const AudioDeviceInfo* feed = voiceStudioFeed()) {
+        return feed;
+    }
+    for (const AudioDeviceInfo& d : outputDeviceInfos_) {
         if (d.isVirtualCable && cable == nullptr && containsCi(d.name, L"cable input")) {
             cable = &d;
         }
@@ -293,6 +308,35 @@ const AudioDeviceInfo* EngineController::suggestedOutput() const {
         }
     }
     return cable != nullptr ? cable : other;
+}
+
+QString EngineController::appMicrophoneName(const AudioDeviceInfo* output) const {
+    // The recording side call apps choose: for VB-CABLE "CABLE Input" feeds "CABLE Output"; for other drivers
+    // the virtual microphone that shares the driver name in brackets, e.g. "Mic (My Virtual Audio)".
+    if (output == nullptr) {
+        return QStringLiteral("the virtual microphone");
+    }
+    const auto bracket = [](const std::wstring& name) {
+        const std::size_t open = name.rfind(L'(');
+        return open == std::wstring::npos ? std::wstring() : name.substr(open);
+    };
+    const std::wstring driver = bracket(output->name);
+    const AudioDeviceInfo* any = nullptr;
+    for (const AudioDeviceInfo& d : inputDeviceInfos_) {
+        if (!d.isVirtualCable) {
+            continue;
+        }
+        if (containsCi(output->name, L"cable input") && containsCi(d.name, L"cable output")) {
+            return qs(d.name);
+        }
+        if (!driver.empty() && bracket(d.name) == driver) {
+            return qs(d.name);
+        }
+        if (any == nullptr) {
+            any = &d;
+        }
+    }
+    return any != nullptr ? qs(any->name) : QStringLiteral("the virtual microphone");
 }
 
 bool EngineController::isUserVirtual(const std::wstring& id) const {
@@ -336,8 +380,14 @@ void EngineController::refreshSetup() {
     s["suggestedMicName"] = suggestedMic ? qs(suggestedMic->name) : QString();
     s["hasPhysicalMic"] = suggestedMic != nullptr;
     s["cableInstalled"] = cableDetected_;
+    // VoiceStudio's own driver: installed but not running needs an explanation (Test Mode / Secure Boot).
+    s["virtualMic"] = QString::fromLatin1(virtualMicStateName(virtualMic_.state));
+    s["virtualMicProblem"] = static_cast<int>(virtualMic_.problemCode);
+    s["testMode"] = virtualMic_.testMode;
+    s["secureBoot"] = virtualMic_.secureBoot;
     s["outputName"] = info.outputRunning ? qs(info.outputName) : QString();
     s["outputOk"] = outputIsCable;
+    s["appMicName"] = appMicrophoneName(outputIsCable ? out : suggestedOut);
     s["canFixOutput"] = suggestedOut != nullptr;
     s["heard"] = micHeard_;
     s["allOk"] = micActive && !micIsVirtual && outputIsCable && cableDetected_;
@@ -461,6 +511,19 @@ void EngineController::setStartWithWindows(bool enabled) {
 }
 
 void EngineController::autoSelectCableOutput() {
+    // The first time the VoiceStudio Virtual Microphone is present, send the voice to it (also when VB-CABLE was
+    // in use) - once only, so choosing another device afterwards sticks.
+    if (const AudioDeviceInfo* feed = voiceStudioFeed(); feed != nullptr && !settings_.virtualMicAdopted) {
+        settings_.virtualMicAdopted = true;
+        if (settings_.engine.outputDeviceId != feed->id) {
+            settings_.engine.outputDeviceId = feed->id;
+            settings_.engine.outputFollowDefault = false;
+            logInfo("VoiceStudio Virtual Microphone found: sending the voice to " + toUtf8(feed->name));
+            pushConfig();
+        }
+        scheduleSave();
+        return;
+    }
     if (!settings_.engine.outputDeviceId.empty() || settings_.engine.outputFollowDefault) {
         return;
     }
@@ -473,6 +536,7 @@ void EngineController::autoSelectCableOutput() {
 
 void EngineController::onDeviceEvent(const DeviceEvent& event) {
     refreshDevices();
+    autoSelectCableOutput(); // e.g. the VoiceStudio Virtual Microphone was just installed
     if (event.type == DeviceEventType::DefaultChanged) {
         supervisor_->notifyDefaultDeviceChanged(event.flow == DeviceFlow::Capture);
     } else {
@@ -1113,10 +1177,11 @@ namespace {
 constexpr double kEnrollMinSeconds = 5.0; // Done is offered from here; the model itself needs 3 s
 }
 
-void EngineController::startVoiceEnrollment() {
+void EngineController::startVoiceEnrollment(bool append) {
     if (enrollPhase_ != QLatin1String("idle")) {
         return;
     }
+    enrollAppend_ = append && supervisor_->engine().isolator().status().enrolled;
     VoiceIsolator& isolator = supervisor_->engine().isolator();
     const IsolationState state = isolator.state();
     if (state != IsolationState::NeedsEnrollment && state != IsolationState::Ready) {
@@ -1126,7 +1191,8 @@ void EngineController::startVoiceEnrollment() {
     } else if (isolator.startRecording()) {
         enrollPhase_ = QStringLiteral("recording");
         enrollMessage_ = QStringLiteral("Recording - talk as long as you like, then press Done.");
-        logInfo("Voice enrollment recording started");
+        logInfo(enrollAppend_ ? "Voice enrollment recording started (adding to the saved voice)"
+                              : "Voice enrollment recording started");
     }
     refreshIsolation();
 }
@@ -1180,7 +1246,7 @@ void EngineController::pollIsolation() {
             }
             const double seconds = isolator.recordingSeconds();
             enrollSubmitRevision_ = isolator.statusRevision();
-            isolator.enroll(isolator.takeRecording16k(), status_.info.inputName);
+            isolator.enroll(isolator.takeRecording16k(), status_.info.inputName, enrollAppend_);
             logInfo("Voice recording finished: " + std::to_string(static_cast<int>(seconds)) + " s");
             enrollPhase_ = QStringLiteral("processing");
             enrollMessage_.clear();
@@ -1215,6 +1281,9 @@ void EngineController::refreshIsolation() {
     iso["phase"] = enrollPhase_;
     iso["recordSeconds"] = round1(isolator.recordingSeconds());
     iso["recordMinSeconds"] = kEnrollMinSeconds;
+    iso["savedSeconds"] = round1(st.savedSeconds);
+    iso["appending"] = enrollAppend_ && enrollPhase_ != QLatin1String("idle");
+    iso["prepareProgress"] = st.prepareProgress;
     iso["recordMaxSeconds"] = VoiceIsolator::kRecordMaxSeconds;
     iso["recordProgress"] = static_cast<double>(isolator.recordingProgress());
     iso["recordLevelDb"] = round1(linearToDb(isolator.recordingPeak()));

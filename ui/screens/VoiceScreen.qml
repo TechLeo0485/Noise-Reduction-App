@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import VoiceStudio
 
-// How you sound: voice character (formant-preserving depth, body, presence) and tone (EQ, volume,
-// evening out). Expert dynamics and effect order sit in "Fine-tune".
+// Fine-tuning how you sound: voice character (formant-preserving depth, body, presence) and tone (EQ,
+// volume, evening out). The ready-made looks are picked on Home. Expert dynamics sit in "Fine-tune".
 ScreenPage {
     id: page
 
@@ -25,6 +25,12 @@ ScreenPage {
     function signed(v, unit) {
         return (v > 0 ? "+" : "") + v.toFixed(1) + " " + unit
     }
+    readonly property string lookName: {
+        const list = backend.voiceLooks
+        for (let i = 0; i < list.length; ++i)
+            if (list[i].key === backend.voiceLook) return list[i].label
+        return "Custom"
+    }
 
     TwoColumns {
         wide: page.wide
@@ -32,28 +38,10 @@ ScreenPage {
         leftContent: [
             Card {
                 title: "Voice character"
-                subtitle: "Make your voice deeper, stronger and thicker - it still sounds like you, not like a robot"
+                subtitle: "Deeper, stronger, thicker - still you, not a robot"
                 icon: ""
 
-                GridLayout {
-                    Layout.fillWidth: true
-                    columns: 2
-                    columnSpacing: 10
-                    rowSpacing: 10
-                    Repeater {
-                        model: backend.voiceLooks
-                        ModeTile {
-                            required property var modelData
-                            Layout.fillHeight: true
-                            Layout.preferredWidth: 1
-                            title: modelData.label
-                            description: modelData.description
-                            selected: backend.voiceLook === modelData.key
-                            onClicked: backend.applyVoiceLook(modelData.key)
-                        }
-                    }
-                }
-
+                StatRow { label: "Look (choose on Home)"; value: page.lookName }
                 VsSlider {
                     label: "Depth - lower or higher pitch"
                     unit: "st"
@@ -89,7 +77,8 @@ ScreenPage {
                     text: page.characterOn
                           ? "On: depth " + page.signed(page.num("pitchSemitones", 0), "st") + ", body "
                             + page.signed(page.num("pitchBodySt", 0), "st") + ". Adds about 35 ms of delay. "
-                            + "For a strong voice, go 2 to 4 steps deeper and add a little body; more sounds less natural."
+                            + "For strong and thick, go 1 to 2 steps deeper and add body. Bass is held back "
+                            + "automatically, so a deeper voice does not get boomy."
                           : "Off: your voice is unchanged and no delay is added."
                 }
             }

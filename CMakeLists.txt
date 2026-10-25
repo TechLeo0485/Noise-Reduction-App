@@ -65,6 +65,7 @@ add_library(vs_core STATIC
     src/audio/wasapi/WasapiCaptureStream.cpp
     src/audio/wasapi/WasapiRenderStream.cpp
     src/devices/DeviceManager.cpp
+    src/devices/VirtualMicDriver.cpp
     src/hardware/HardwareInfo.cpp
     src/diagnostics/Logger.cpp
     src/diagnostics/ProcessMetrics.cpp
@@ -74,7 +75,7 @@ add_library(vs_core STATIC
 target_include_directories(vs_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(vs_core
     PUBLIC vs_compile_options
-    PRIVATE ole32 avrt dxgi psapi shell32 uuid)
+    PRIVATE ole32 avrt dxgi psapi shell32 uuid setupapi cfgmgr32)
 if(VOICESTUDIO_WITH_RNNOISE)
     target_link_libraries(vs_core PRIVATE rnnoise)
     target_compile_definitions(vs_core PRIVATE VOICESTUDIO_HAS_RNNOISE=1)
@@ -163,11 +164,11 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/VsSlider.qml
             ui/components/VsSwitch.qml
             ui/components/VoiceIsolationCard.qml
+            ui/components/VoiceRecorderCard.qml
             ui/components/DeviceTile.qml
             ui/screens/HomeScreen.qml
             ui/screens/VoiceScreen.qml
             ui/screens/CleanupScreen.qml
-            ui/screens/MyVoiceScreen.qml
             ui/screens/SetupScreen.qml
             ui/screens/HelpScreen.qml)
 
@@ -203,6 +204,23 @@ if(VOICESTUDIO_BUILD_APP)
     install(CODE "set(QT_DEPLOY_BIN_DIR \".\")")
     install(SCRIPT ${VOICESTUDIO_DEPLOY_SCRIPT})
     install(FILES LICENSE THIRD_PARTY_LICENSES.md README.md DESTINATION . OPTIONAL)
+
+    # VoiceStudio Virtual Microphone: the device installer, and the signed driver package when it has been built
+    # (scripts/build-driver.ps1 writes it to build/driver-package; see driver/README.md).
+    add_executable(vs_vmic tools/vs_vmic.cpp src/devices/VirtualMicDriver.cpp)
+    target_include_directories(vs_vmic PRIVATE src)
+    # Every command changes or reads machine-wide driver state: always ask for administrator rights.
+    target_link_options(vs_vmic PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
+    target_link_libraries(vs_vmic PRIVATE user32 advapi32)
+    target_link_libraries(vs_vmic PRIVATE setupapi newdev cfgmgr32)
+    install(TARGETS vs_vmic RUNTIME DESTINATION driver)
+    set(VOICESTUDIO_DRIVER_PACKAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/driver-package" CACHE PATH
+        "Signed VoiceStudio Virtual Microphone package (vsvirtualmic.sys/.inf/.cat + certificate)")
+    if(EXISTS "${VOICESTUDIO_DRIVER_PACKAGE_DIR}/vsvirtualmic.inf")
+        install(DIRECTORY "${VOICESTUDIO_DRIVER_PACKAGE_DIR}/" DESTINATION driver)
+    else()
+        message(STATUS "VoiceStudio Virtual Microphone package not built; the installer will not include it")
+    endif()
     if(VOICESTUDIO_WITH_VOXLOCK)
         install(FILES "${VOICESTUDIO_ORT_DLL}" DESTINATION .)
         install(FILES ${VOICESTUDIO_VOXLOCK_FILES} DESTINATION models/voxlock)

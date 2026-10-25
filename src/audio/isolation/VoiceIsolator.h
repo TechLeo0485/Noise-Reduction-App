@@ -44,6 +44,8 @@ struct IsolationStatus {
     double calibrationP95Ms = 0.0;
     std::string enrolledMicrophone; // microphone the voice sample was recorded with (empty if unknown)
     int adaptations = 0;            // times the chunk size was raised at runtime because the CPU fell behind
+    double savedSeconds = 0.0;      // length of the saved recording (all sessions added together)
+    double prepareProgress = 0.0;   // 0..1 while a new voice is being prepared (busy)
 };
 
 struct IsolationFrameInfo {
@@ -85,10 +87,12 @@ public:
     void initializeWithModel(ModelFactory factory, int framesPerRun = 2);
 
     // Validates and saves a 16 kHz recording as the enrolled voice, then switches the model to it.
+    // `append` adds it to the saved recording instead of replacing it. From the whole recording the 3 s the
+    // network uses are chosen by testing candidates on the speaker's own held-out speech (planEnrollment()).
     // `microphone` (the device it was recorded with) is saved alongside, so the UI can warn when a
     // different microphone is in use. Asynchronous. On a validation error the previous voice stays
     // active and status().message explains.
-    void enroll(std::vector<float> audio16k, std::string microphone = {});
+    void enroll(std::vector<float> audio16k, std::string microphone = {}, bool append = false);
     // Deletes the saved voice. While isolation is enabled the output is silent until a new voice is enrolled.
     void deleteEnrollment();
     // Folder of the saved voice (sample and full recording); empty before initialize().
@@ -156,6 +160,9 @@ private:
     [[nodiscard]] std::filesystem::path microphoneFile() const;
     [[nodiscard]] std::filesystem::path recordingFile() const;
     bool prepareVoice(const std::vector<float>& audio16k, std::string& error);
+    // The 3 s voice sample for a whole recording (see enroll()). Reports progress as `state` + busy.
+    [[nodiscard]] std::vector<float> chooseVoiceSample(const std::vector<float>& audio16k, IsolationState state);
+    [[nodiscard]] double savedRecordingSeconds() const;
     void publish(std::unique_ptr<voxlock::IChunkModel> model, int framesPerRun);
     void requestRestart() noexcept;
     void workerReset();

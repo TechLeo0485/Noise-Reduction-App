@@ -3,11 +3,9 @@ import QtQuick.Layouts
 import VoiceStudio
 
 // Strict voice isolation: the on/off switch, its status and, under "Technical details", the measured
-// cost. Recording the voice it uses lives on the My Voice page (`recordRequested`).
+// cost. The voice it uses is recorded in VoiceRecorderCard, shown right below it on the Clean-up page.
 Card {
     id: root
-
-    signal recordRequested()
 
     readonly property var iso: backend.isolation
     readonly property bool on: backend.params.isolationEnabled === true
@@ -40,46 +38,13 @@ Card {
             color: Theme.warning
             font.pixelSize: 12
             text: root.iso.enrolled !== true && root.iso.state !== "loading"
-                  ? "Your microphone is silenced: record your voice on the My Voice page to start isolation."
+                  ? "Your microphone is silenced: record your voice below to start isolation."
                   : root.iso.state === "loading" || root.iso.busy === true
                     ? "Your microphone is silenced while the isolation model gets ready..."
                     : root.iso.state === "error"
                       ? "Your microphone is silenced: voice isolation is unavailable. Turn it off to use your microphone normally."
                       : "Your microphone is briefly silenced while isolation starts."
         }
-    }
-
-    RowLayout {
-        Layout.fillWidth: true
-        spacing: 10
-        Text {
-            text: root.iso.enrolled === true ? "" : ""
-            font.family: Theme.iconFont
-            font.pixelSize: 14
-            color: root.iso.enrolled === true ? Theme.success : Theme.warning
-        }
-        Text {
-            Layout.fillWidth: true
-            text: root.iso.enrolled === true ? "Uses the voice you recorded on this computer"
-                                             : "Record your voice first"
-            color: Theme.text
-            font.pixelSize: 13
-            wrapMode: Text.WordWrap
-        }
-        LinkText {
-            text: root.iso.enrolled === true ? "Re-record" : "Record my voice"
-            onClicked: root.recordRequested()
-        }
-    }
-
-    Text {
-        visible: root.iso.microphoneMismatch === true
-        text: "Your voice was recorded with \"" + root.iso.enrolledMicrophone + "\", but you are now using \""
-              + backend.inputName + "\". Re-record it with this microphone for the best isolation."
-        color: Theme.warning
-        font.pixelSize: 12
-        wrapMode: Text.WordWrap
-        Layout.fillWidth: true
     }
 
     Expander {

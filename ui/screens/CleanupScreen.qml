@@ -3,12 +3,11 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import VoiceStudio
 
-// Everything that removes sound you do not want: background noise (one level picker, details in
-// "Fine-tune"), other people's voices (strict isolation) and ready-made settings per situation.
+// Everything that removes sound you do not want: other people's voices (strict isolation and the voice
+// recording it uses), background noise details (the level itself is picked on Home) and ready-made
+// settings per situation.
 ScreenPage {
     id: page
-
-    signal openPage(string key)
 
     readonly property var p: backend.params
     readonly property int mode: p.suppressionMode !== undefined ? p.suppressionMode : 1
@@ -26,15 +25,21 @@ ScreenPage {
         wide: page.wide
 
         leftContent: [
+            VoiceIsolationCard {},
+
+            VoiceRecorderCard {}
+        ]
+
+        rightContent: [
             Card {
                 title: "Background noise"
-                subtitle: "Fans, keyboards, traffic, hum"
-                icon: ""
-                NoiseLevelPicker {}
+                subtitle: "The level is set on Home. Here: how it is removed."
+                icon: "\uE9D9"
 
                 Expander {
                     title: "Fine-tune"
                     hint: "Engine, strength, rumble filter and noise gate"
+                    expanded: true
 
                     Text { text: "Engine"; color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
                     GridLayout {
@@ -94,12 +99,6 @@ ScreenPage {
                         enabled: page.gateOn
                     }
                 }
-            }
-        ]
-
-        rightContent: [
-            VoiceIsolationCard {
-                onRecordRequested: page.openPage("myvoice")
             },
 
             Card {

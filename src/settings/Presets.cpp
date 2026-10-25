@@ -137,9 +137,10 @@ void applyPresetValues(const std::map<std::string, float>& values, EngineParamet
 const std::vector<VoiceLook>& voiceLooks() {
     static const std::vector<VoiceLook> looks = {
         {"natural", "Natural", "Your own voice, unchanged.", 0.f, 0.f, 0.f},
-        {"deepStrong", "Deep & Strong", "Lower and fuller, still clear.", -3.f, 1.5f, 4.f},
-        {"warm", "Warm", "A little deeper and softer.", -1.5f, 1.f, 1.5f},
-        {"radio", "Radio", "Thick, close and present, like a radio host.", -2.f, 2.5f, 6.f},
+        {"strongThick", "Strong & Thick", "Fuller and more solid, a touch lower - not bassy.", -1.5f, 1.5f, 3.f},
+        {"deep", "Deep", "Clearly lower, still clear.", -3.f, 1.f, 4.f},
+        {"warm", "Warm", "A little deeper and softer.", -1.f, 1.f, 1.5f},
+        {"radio", "Radio", "Thick, close and present, like a radio host.", -1.f, 2.f, 5.f},
     };
     return looks;
 }

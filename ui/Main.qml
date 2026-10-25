@@ -15,19 +15,18 @@ ApplicationWindow {
     color: Theme.background
     font.family: Theme.fontFamily
 
-    // Pages are addressed by key; `index` is the position in the StackLayout below. Every control lives on
-    // exactly one page; expert settings sit in collapsed "Fine-tune" / "Technical" sections on that page.
+    // Pages are addressed by key; `index` is the position in the StackLayout below. Four pages in the sidebar:
+    // Home holds the everyday choices, the others the details. Help is opened from the sidebar footer.
     readonly property var allPages: ({
-        home:    { title: "Home", icon: "\uE80F", subtitle: "Check that everything works and control your voice", index: 0 },
-        voice:   { title: "Voice", icon: "\uE9E9", subtitle: "How you sound: character (deep, strong, warm...) and tone", index: 1 },
+        home:    { title: "Home", icon: "\uE80F", subtitle: "Is everything working, and the choices you change most", index: 0 },
+        voice:   { title: "Voice", icon: "\uE9E9", subtitle: "Fine-tune how you sound: depth, body, presence and tone", index: 1 },
         cleanup: { title: "Clean-up", icon: "\uE9D9", subtitle: "Remove background noise and other people's voices", index: 2 },
-        myvoice: { title: "My Voice", icon: "\uE720", subtitle: "Record your voice so VoiceStudio knows it is you", index: 3 },
-        setup:   { title: "Setup", icon: "\uE713", subtitle: "Microphone, virtual microphone, headphones and settings", index: 4 },
-        help:    { title: "Help", icon: "\uE897", subtitle: "How to set up VoiceStudio and use it in your calls", index: 5 }
+        setup:   { title: "Setup", icon: "\uE713", subtitle: "Microphone, virtual microphone, headphones and settings", index: 3 },
+        help:    { title: "Help", icon: "\uE897", subtitle: "How to set up VoiceStudio and use it in your calls", index: 4 }
     })
     // Opens a page by key (used by C++, e.g. the "User Guide" shortcut opens "help").
     function showPage(key) {
-        if (navKeys.indexOf(key) >= 0)
+        if (allPages[key] !== undefined)
             currentKey = key
     }
 
@@ -40,9 +39,9 @@ ApplicationWindow {
         }
     }
 
-    readonly property var navKeys: ["home", "voice", "cleanup", "myvoice", "setup", "help"]
+    readonly property var navKeys: ["home", "voice", "cleanup", "setup"]
     property string currentKey: "home"
-    readonly property var currentInfo: allPages[navKeys.indexOf(currentKey) >= 0 ? currentKey : "home"]
+    readonly property var currentInfo: allPages[currentKey] !== undefined ? allPages[currentKey] : allPages.home
 
     RowLayout {
         anchors.fill: parent
@@ -97,40 +96,75 @@ ApplicationWindow {
 
                 Item { Layout.fillHeight: true }
 
-                // Engine status
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: statusColumn.implicitHeight + 24
-                    radius: Theme.radiusSmall
-                    color: Theme.surface
-                    border.color: Theme.border
+                LinkText {
+                    Layout.leftMargin: 8
+                    Layout.bottomMargin: 6
+                    text: "Help and user guide"
+                    onClicked: window.currentKey = "help"
+                }
 
-                    ColumnLayout {
-                        id: statusColumn
-                        anchors.fill: parent
+                // On / off: the one switch for the whole app
+                Rectangle {
+                    id: powerButton
+                    readonly property bool on: backend.engineEnabled
+                    Layout.fillWidth: true
+                    implicitHeight: powerRow.implicitHeight + 22
+                    radius: Theme.radiusSmall
+                    color: on ? Theme.accentMuted : (powerMouse.containsMouse ? Theme.surfaceHover : Theme.surfaceRaised)
+                    border.color: on ? Theme.accent : Theme.border
+
+                    RowLayout {
+                        id: powerRow
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
                         anchors.margins: 12
-                        spacing: 4
-                        RowLayout {
-                            spacing: 8
-                            Rectangle {
-                                width: 8
-                                height: 8
-                                radius: 4
-                                color: Theme.stateColor(backend.engineState)
-                            }
+                        spacing: 10
+                        Rectangle {
+                            implicitWidth: 30
+                            implicitHeight: 30
+                            radius: 15
+                            color: powerButton.on ? Theme.accent : Theme.surfaceHover
                             Text {
-                                text: backend.engineState
+                                anchors.centerIn: parent
+                                text: "\uE7E8"
+                                font.family: Theme.iconFont
+                                font.pixelSize: 14
+                                color: powerButton.on ? Theme.background : Theme.textSecondary
+                            }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Text {
+                                text: powerButton.on ? "VoiceStudio is on" : "VoiceStudio is off"
                                 color: Theme.text
-                                font.pixelSize: 12
+                                font.pixelSize: 13
                                 font.weight: Font.DemiBold
                             }
+                            RowLayout {
+                                spacing: 6
+                                Rectangle {
+                                    visible: powerButton.on
+                                    implicitWidth: 7
+                                    implicitHeight: 7
+                                    radius: 4
+                                    color: Theme.stateColor(backend.engineState)
+                                }
+                                Text {
+                                    text: powerButton.on ? backend.engineState : "Click to turn on"
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 11
+                                }
+                            }
                         }
-                        Text {
-                            text: backend.activeSuppressor !== "" && backend.engineRunning
-                                  ? "Suppression: " + backend.activeSuppressor : "Suppression idle"
-                            color: Theme.textSecondary
-                            font.pixelSize: 11
-                        }
+                    }
+                    MouseArea {
+                        id: powerMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: backend.engineEnabled = !powerButton.on
                     }
                 }
 
@@ -202,14 +236,6 @@ ApplicationWindow {
                     }
                 }
 
-                VsSwitch {
-                    Layout.fillWidth: false
-                    Layout.preferredWidth: 190
-                    label: "Audio engine"
-                    description: backend.engineEnabled ? "Processing enabled" : "Stopped"
-                    checked: backend.engineEnabled
-                    onToggled: (value) => backend.engineEnabled = value
-                }
             }
 
             // Actionable routing / engine warnings
@@ -248,12 +274,11 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 currentIndex: window.currentInfo.index
 
-                HomeScreen { onOpenPage: (key) => window.showPage(key) }    // 0
-                VoiceScreen {}                                              // 1
-                CleanupScreen { onOpenPage: (key) => window.showPage(key) } // 2
-                MyVoiceScreen {}                                            // 3
-                SetupScreen {}                                              // 4
-                HelpScreen {}                                               // 5
+                HomeScreen { onOpenPage: (key) => window.showPage(key) }  // 0
+                VoiceScreen {}                                            // 1
+                CleanupScreen {}                                          // 2
+                SetupScreen { onOpenPage: (key) => window.showPage(key) } // 3
+                HelpScreen {}                                             // 4
             }
         }
     }

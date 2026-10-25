@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    The Windows Driver Kit and SDK come from NuGet (no WDK installation needed); scripts\build-driver.ps1
+    restores them into driver\packages (packages.config). Same layout as Microsoft's Windows-driver-samples.
+  -->
+  <PropertyGroup>
+    <VsWdkVersion>10.0.26100.6584</VsWdkVersion>
+    <VsWdkPackages>$(MSBuildThisFileDirectory)packages\</VsWdkPackages>
+  </PropertyGroup>
+  <Import Project="$(VsWdkPackages)Microsoft.Windows.WDK.x64.$(VsWdkVersion)\build\native\Microsoft.Windows.WDK.x64.props" Condition="Exists('$(VsWdkPackages)Microsoft.Windows.WDK.x64.$(VsWdkVersion)\build\native\Microsoft.Windows.WDK.x64.props') and '$(Platform)' == 'x64'"/>
+  <Import Project="$(VsWdkPackages)Microsoft.Windows.SDK.CPP.x64.$(VsWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props" Condition="Exists('$(VsWdkPackages)Microsoft.Windows.SDK.CPP.x64.$(VsWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props') and '$(Platform)' == 'x64'"/>
+  <Import Project="$(VsWdkPackages)Microsoft.Windows.SDK.CPP.$(VsWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.props" Condition="Exists('$(VsWdkPackages)Microsoft.Windows.SDK.CPP.$(VsWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.props')"/>
+</Project>

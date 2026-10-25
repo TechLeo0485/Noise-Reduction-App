@@ -18,7 +18,8 @@ Physical microphone
         noise suppression: Off | DSP-only | RNNoise    (one-frame crossfade on change)
         noise gate / downward expander, held open by RNNoise VAD
         EQ → compressor → voice character   (user-configurable order; voice character =
-            formant-preserving pitch (Signalsmith Stretch, 35 ms blocks) → 70 Hz high-pass → presence peak)
+            formant-preserving pitch (Signalsmith Stretch, 35 ms blocks) → 90 Hz high-pass → anti-boom
+            low shelf at 150 Hz (−1 dB per semitone lower, −0.5 dB per semitone of body, max −7 dB) → presence peak)
         voice volume, master mute (ramped)
         limiter (zero latency) → NaN/Inf guard → hard clip ±1.0
   → SPSC ring (output) [+ SPSC ring (monitor, with monitor gain)]

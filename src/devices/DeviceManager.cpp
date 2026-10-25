@@ -40,7 +40,8 @@ std::wstring defaultId(IMMDeviceEnumerator* enumerator, EDataFlow flow, ERole ro
 
 bool looksLikeVirtualCable(const std::wstring& name) {
     const std::wstring n = lowercase(name);
-    return n.find(L"cable") != std::wstring::npos || n.find(L"vb-audio") != std::wstring::npos ||
+    return n.find(L"voicestudio") != std::wstring::npos || // VoiceStudio Virtual Microphone (driver/)
+           n.find(L"cable") != std::wstring::npos || n.find(L"vb-audio") != std::wstring::npos ||
            n.find(L"voicemeeter") != std::wstring::npos || n.find(L"voicemod") != std::wstring::npos ||
            n.find(L"virtual") != std::wstring::npos;
 }

@@ -40,6 +40,8 @@ constexpr std::uint64_t kUnderrunsToAdapt = 4; // late chunks within kAdaptWindo
 constexpr auto kAdaptWindow = std::chrono::seconds(10);
 constexpr std::uint64_t kFailuresToStop = 3;   // inference errors within kFailureWindow that end isolation
 constexpr auto kFailureWindow = std::chrono::seconds(30);
+constexpr int kTestFramesPerRun = 8;           // offline voice-sample tests: large chunks, fastest per second of audio
+constexpr std::size_t kAppendGapSamples = voxlock::kSampleRate * 3 / 10; // 0.3 s pause between recording sessions
 
 std::size_t burstSamples48k(int framesPerRun) {
     // One inference releases K hops of 16 kHz audio, i.e. 3 * K * 128 samples at 48 kHz.
@@ -183,6 +185,9 @@ void VoiceIsolator::setStatus(IsolationState state, const std::string& message, 
         status_.state = state;
         status_.message = message;
         status_.busy = busy;
+        if (!busy) {
+            status_.prepareProgress = 0.0;
+        }
     }
     state_.store(static_cast<int>(state), std::memory_order_release);
     statusRevision_.fetch_add(1, std::memory_order_acq_rel);
@@ -231,6 +236,7 @@ void VoiceIsolator::initialize(const std::filesystem::path& runtimeDir, const st
                 std::lock_guard lock(statusMutex_);
                 status_.enrolled = true;
                 status_.enrolledMicrophone = microphone;
+                status_.savedSeconds = savedRecordingSeconds();
                 return;
             }
             logWarning("Saved voice sample could not be used: " + error);
@@ -257,11 +263,11 @@ void VoiceIsolator::initializeWithModel(ModelFactory factory, int framesPerRun) 
     setStatus(IsolationState::Ready, "Isolating your voice.", false);
 }
 
-void VoiceIsolator::enroll(std::vector<float> audio16k, std::string microphone) {
+void VoiceIsolator::enroll(std::vector<float> audio16k, std::string microphone, bool append) {
     if (state() == IsolationState::NotBuilt) {
         return;
     }
-    post([this, audio = std::move(audio16k), microphone = std::move(microphone)] {
+    post([this, audio = std::move(audio16k), microphone = std::move(microphone), append]() mutable {
         const IsolationState before = state();
         std::string error;
         if (!voxlock::validateVoiceSample(audio, error)) {
@@ -272,21 +278,37 @@ void VoiceIsolator::enroll(std::vector<float> audio16k, std::string microphone) 
             setStatus(before, "The voice isolation model is not loaded.", false);
             return;
         }
+        // Adding more: the new part goes after what is saved, with a short pause in between.
+        if (append && !enrollmentFile_.empty()) {
+            std::vector<float> saved;
+            std::string ignored;
+            if (voxlock::loadVoiceSample(recordingFile(), saved, ignored) ||
+                voxlock::loadVoiceSample(enrollmentFile_, saved, ignored)) {
+                saved.resize(saved.size() + kAppendGapSamples, 0.0f);
+                saved.insert(saved.end(), audio.begin(), audio.end());
+                const auto limit = static_cast<std::size_t>(kRecordMaxSeconds * voxlock::kSampleRate);
+                if (saved.size() > limit) { // keep the newest 30 minutes
+                    saved.erase(saved.begin(), saved.begin() + static_cast<std::ptrdiff_t>(saved.size() - limit));
+                }
+                logInfo("Voice recording: adding " + std::to_string(audio.size() / voxlock::kSampleRate) + " s to " +
+                        std::to_string((saved.size() - audio.size()) / voxlock::kSampleRate) + " s saved");
+                audio = std::move(saved);
+            }
+        }
         setStatus(before, "Preparing your voice...", true);
-        if (!prepareVoice(audio, error)) {
+        const std::vector<float> sample = chooseVoiceSample(audio, before);
+        if (!prepareVoice(sample, error)) {
             logError("Voice enrollment failed: " + error);
             setStatus(before, "Voice enrollment failed: " + error, false);
             return;
         }
-        // Saved: the 3 s the model uses (loads exactly as enrolled) and, for the user, the whole recording.
-        std::vector<float> sample;
-        voxlock::fitSample(audio, sample, error);
+        // Saved: the 3 s the model uses (loads exactly as enrolled) and the whole recording (for adding more).
         if (!enrollmentFile_.empty() && !voxlock::saveVoiceSample(enrollmentFile_, sample, error)) {
             logError("Saving the voice sample failed: " + error);
             setStatus(IsolationState::Ready, "Isolating your voice, but it could not be saved for next time: " + error, false);
             return;
         }
-        if (!enrollmentFile_.empty() && audio.size() > sample.size() && !voxlock::saveRecording(recordingFile(), audio, error)) {
+        if (!enrollmentFile_.empty() && !voxlock::saveRecording(recordingFile(), audio, error)) {
             logWarning("Saving the full voice recording failed: " + error);
         }
         if (!enrollmentFile_.empty()) {
@@ -296,7 +318,104 @@ void VoiceIsolator::enroll(std::vector<float> audio16k, std::string microphone) 
         std::lock_guard lock(statusMutex_);
         status_.enrolled = true;
         status_.enrolledMicrophone = microphone;
+        status_.savedSeconds = static_cast<double>(audio.size()) / voxlock::kSampleRate;
     });
+}
+
+std::vector<float> VoiceIsolator::chooseVoiceSample(const std::vector<float>& audio16k, IsolationState state) {
+    const voxlock::EnrollmentPlan plan = voxlock::planEnrollment(audio16k);
+    if (plan.candidates.empty()) {
+        return audio16k; // shorter than 3 s: prepareVoice() reports it
+    }
+#if defined(VOICESTUDIO_HAS_VOXLOCK)
+    if (!testFactory_ && runtime_ && plan.candidates.size() > 1 && !plan.tests.empty()) {
+        const auto start = std::chrono::steady_clock::now();
+        const auto isolate = [this](const std::vector<float>& sample, const std::vector<std::vector<float>>& inputs,
+                                    std::vector<std::vector<float>>& outputs) {
+            voxlock::EnrollmentTensors tensors;
+            std::string error;
+            if (!runtime_->enroll(sample, tensors, error)) {
+                logWarning("Voice sample test: " + error);
+                return false;
+            }
+            voxlock::ChunkModelOptions options;
+            options.framesPerRun = kTestFramesPerRun;
+            options.threads = kThreads;
+            const auto model = runtime_->createChunkModel(tensors, options, error);
+            if (!model) {
+                logWarning("Voice sample test: " + error);
+                return false;
+            }
+            // Offline: push each test segment, then enough silence to get its last samples out.
+            constexpr int kPush = 1600;
+            voxlock::Stream stream(kTestFramesPerRun, kPush);
+            std::vector<float> out(static_cast<std::size_t>(stream.maxOutputSamples()));
+            const std::vector<float> tail(static_cast<std::size_t>(voxlock::kNfft + kTestFramesPerRun * voxlock::kHop), 0.0f);
+            outputs.clear();
+            for (const std::vector<float>& input : inputs) {
+                stream.reset();
+                std::vector<float> result;
+                for (const std::vector<float>* part : {&input, &tail}) {
+                    for (std::size_t i = 0; i < part->size(); i += kPush) {
+                        const int count = static_cast<int>(std::min<std::size_t>(kPush, part->size() - i));
+                        const int n = stream.push(*model, part->data() + i, count, out.data());
+                        if (n < 0) {
+                            return false;
+                        }
+                        result.insert(result.end(), out.begin(), out.begin() + n);
+                    }
+                }
+                result.resize(input.size(), 0.0f);
+                outputs.push_back(std::move(result));
+            }
+            return true;
+        };
+        const auto progress = [this, state](std::size_t index, std::size_t count) {
+            {
+                std::lock_guard lock(statusMutex_);
+                status_.prepareProgress = static_cast<double>(index) / static_cast<double>(count + 1);
+            }
+            setStatus(state,
+                      "Testing which parts of your recording recognise you best (" + std::to_string(index * 100 / count) +
+                          "%)...",
+                      true);
+        };
+        std::vector<double> scores;
+        // Several candidates at once (2 threads each), leaving cores for the voice that keeps running meanwhile.
+        const int parallel = static_cast<int>(std::clamp(std::thread::hardware_concurrency() / 4u, 1u, 4u));
+        const std::size_t best = voxlock::chooseCandidate(audio16k, plan, isolate, progress, &scores, parallel);
+        std::string log = "Voice sample chosen: " + plan.candidates[best].label + " (" +
+                          std::to_string(plan.candidates.size()) + " candidates, " + std::to_string(plan.tests.size()) +
+                          " test segments, " +
+                          std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now() - start)
+                                             .count()) +
+                          " ms; scores";
+        for (std::size_t i = 0; i < scores.size(); ++i) {
+            log += " " + plan.candidates[i].label + "=" + std::to_string(scores[i]).substr(0, 6);
+        }
+        logInfo(log + ")");
+        {
+            std::lock_guard lock(statusMutex_);
+            status_.prepareProgress = static_cast<double>(plan.candidates.size()) / static_cast<double>(plan.candidates.size() + 1);
+        }
+        setStatus(state, "Measuring this computer's speed...", true);
+        return plan.candidates[best].sample;
+    }
+#else
+    (void)state;
+#endif
+    return plan.candidates.front().sample;
+}
+
+double VoiceIsolator::savedRecordingSeconds() const {
+    // 16 kHz 16-bit mono with a 44-byte header (saveRecording()); before the full recording was kept, 3 s.
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(recordingFile(), ec);
+    if (!ec && bytes > 44) {
+        return static_cast<double>(bytes - 44) / (2.0 * voxlock::kSampleRate);
+    }
+    return std::filesystem::exists(enrollmentFile_, ec) ? 3.0 : 0.0;
 }
 
 void VoiceIsolator::deleteEnrollment() {
@@ -328,6 +447,7 @@ void VoiceIsolator::deleteEnrollment() {
             status_.enrolled = false;
             status_.enrolledMicrophone.clear();
             status_.framesPerRun = 0;
+            status_.savedSeconds = 0.0;
         }
         logInfo("Voice sample deleted");
         const IsolationState next = state() == IsolationState::Error ? IsolationState::Error : IsolationState::NeedsEnrollment;

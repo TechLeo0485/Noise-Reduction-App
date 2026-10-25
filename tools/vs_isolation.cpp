@@ -14,6 +14,7 @@
 //   --set key=value   set a chain parameter for the real-time run (keys as in settings.json, e.g.
 //                     --set gateUseVad=0 --set gateThresholdDb=-36); repeatable
 //   --spin 0|1        ONNX Runtime intra-op thread spinning (offline mode; the app uses 0)
+//   --log file        write the application log (e.g. which voice sample was chosen) to `file`
 //
 // Input WAVs may have any sample rate; the voice sample needs at least 3 s of speech.
 
@@ -24,6 +25,7 @@
 #include "audio/VoiceProcessingChain.h"
 #include "audio/buffers/Resampler.h"
 #include "core/RealtimeThread.h"
+#include "diagnostics/Logger.h"
 
 #include <windows.h>
 
@@ -296,6 +298,7 @@ int main(int argc, char** argv) {
         else if (a == "--isolator-only") isolatorOnly = true;
         else if (a == "--k") k = std::max(1, std::atoi(next().c_str()));
         else if (a == "--spin") spin = next() != "0";
+        else if (a == "--log") Logger::instance().open(next());
         else if (a == "--set") {
             const std::string kv = next();
             const auto eq = kv.find('=');

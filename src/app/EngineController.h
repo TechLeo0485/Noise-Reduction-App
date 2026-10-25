@@ -4,6 +4,7 @@
 #include "audio/monitoring/StatsCollector.h"
 #include "core/Parameters.h"
 #include "devices/DeviceManager.h"
+#include "devices/VirtualMicDriver.h"
 #include "diagnostics/ProcessMetrics.h"
 #include "hardware/HardwareInfo.h"
 #include "settings/SettingsStore.h"
@@ -200,7 +201,8 @@ public:
     // Strict voice isolation: records the microphone for as long as the user likes (Done ends it, up to
     // 30 min), then enrolls it as "your voice" (saved locally under %LOCALAPPDATA%/VoiceStudio/voice,
     // with the full recording). Re-recording replaces it; delete removes the files.
-    Q_INVOKABLE void startVoiceEnrollment();
+    // append: add to the saved voice instead of replacing it ("Add more").
+    Q_INVOKABLE void startVoiceEnrollment(bool append = false);
     Q_INVOKABLE void finishVoiceEnrollment();
     Q_INVOKABLE void cancelVoiceEnrollment();
     Q_INVOKABLE void deleteVoiceEnrollment();
@@ -248,6 +250,11 @@ private:
     [[nodiscard]] const AudioDeviceInfo* findDevice(const std::vector<AudioDeviceInfo>& list, const std::wstring& id) const;
     [[nodiscard]] const AudioDeviceInfo* suggestedMicrophone() const;
     [[nodiscard]] const AudioDeviceInfo* suggestedOutput() const;
+    // "VoiceStudio Mic Feed", the playback side of the VoiceStudio Virtual Microphone driver, if installed.
+    [[nodiscard]] const AudioDeviceInfo* voiceStudioFeed() const;
+    VirtualMicStatus virtualMic_{}; // the VoiceStudio Virtual Microphone driver, refreshed with the device list
+    // Name of the microphone call apps should pick for the virtual microphone `output` plays into.
+    [[nodiscard]] QString appMicrophoneName(const AudioDeviceInfo* output) const;
     [[nodiscard]] bool isUserVirtual(const std::wstring& id) const;
     void startVoicePlayback(std::vector<float> recording);
     void setVoiceCheck(const QString& state, const QString& message, double progress = 0.0);
@@ -282,6 +289,7 @@ private:
     QString enrollPhase_ = QStringLiteral("idle"); // idle | recording | processing
     QString enrollMessage_;
     std::uint64_t enrollSubmitRevision_ = 0;
+    bool enrollAppend_ = false; // the recording in progress is added to the saved voice
     std::uint64_t isolationRevisionSeen_ = ~0ull;
     std::vector<float> isolationInferenceUs_; // recent chunk.onnx times (ring)
     std::size_t isolationInferenceNext_ = 0;

@@ -201,6 +201,174 @@ TEST(VoxLockEnrollment, ValidationRejectsSilenceAndSteadyNoise) {
     EXPECT_TRUE(validateVoiceSample(speech, error)) << error;
 }
 
+namespace {
+
+// Speech-like noise bursts with pauses, `seconds` long, at `level` (RMS of the bursts).
+std::vector<float> speechLike(double seconds, float level, unsigned seed) {
+    std::vector<float> x = test::whiteNoise(static_cast<std::size_t>(seconds * kSampleRate), level, seed);
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        if ((i / 2400) % 4 == 3) {
+            x[i] *= 0.01f;
+        }
+    }
+    return x;
+}
+
+// A guided recording: 20 s each of normal, louder, quieter, higher (here: other noise), lower and free talk.
+std::vector<float> guidedRecording() {
+    std::vector<float> audio;
+    const float levels[] = {0.08f, 0.2f, 0.03f, 0.08f, 0.1f, 0.08f};
+    for (unsigned k = 0; k < 6; ++k) {
+        const std::vector<float> part = speechLike(20.0, levels[k], 100 + k);
+        audio.insert(audio.end(), part.begin(), part.end());
+    }
+    return audio;
+}
+
+bool overlapping(const SampleRange& a, const SampleRange& b) {
+    return a.begin < b.end && b.begin < a.end;
+}
+
+} // namespace
+
+TEST(VoxLockEnrollment, PlanCoversEverySectionOfALongRecording) {
+    const std::vector<float> audio = guidedRecording();
+    const EnrollmentPlan plan = planEnrollment(audio);
+    ASSERT_GE(plan.candidates.size(), 4u);
+    EXPECT_EQ(plan.candidates.front().label, "most typical");
+    EXPECT_EQ(plan.candidates.back().label, "mix");
+    EXPECT_EQ(plan.tests.size(), 6u); // one held-out test segment per section
+    for (const SampleCandidate& c : plan.candidates) {
+        EXPECT_EQ(c.sample.size(), static_cast<std::size_t>(kEnrollSamples)) << c.label;
+        ASSERT_FALSE(c.sources.empty());
+    }
+    // A section's own candidate never overlaps that section's test segment.
+    for (std::size_t c = 1; c + 1 < plan.candidates.size(); ++c) {
+        const SampleRange& source = plan.candidates[c].sources.front();
+        const std::size_t section = source.begin / (audio.size() / 6);
+        EXPECT_FALSE(overlapping(source, plan.tests[section])) << plan.candidates[c].label;
+    }
+    // The candidates come from different styles: the quiet section's window is clearly quieter.
+    double quietest = 1.0;
+    double loudest = 0.0;
+    for (const SampleCandidate& c : plan.candidates) {
+        quietest = std::min(quietest, test::rmsOf(c.sample));
+        loudest = std::max(loudest, test::rmsOf(c.sample));
+    }
+    EXPECT_GT(loudest / quietest, 3.0);
+}
+
+TEST(VoxLockEnrollment, ShortRecordingHasNothingToChoose) {
+    const EnrollmentPlan plan = planEnrollment(speechLike(8.0, 0.1f, 7));
+    ASSERT_EQ(plan.candidates.size(), 1u);
+    EXPECT_TRUE(plan.tests.empty());
+    EXPECT_EQ(planEnrollment(speechLike(2.0, 0.1f, 7)).candidates.size(), 0u);
+
+    std::size_t calls = 0;
+    const auto isolate = [&](const std::vector<float>&, const std::vector<std::vector<float>>&,
+                             std::vector<std::vector<float>>&) {
+        ++calls;
+        return true;
+    };
+    EXPECT_EQ(chooseCandidate(speechLike(8.0, 0.1f, 7), plan, isolate), 0u);
+    EXPECT_EQ(calls, 0u);
+}
+
+TEST(VoxLockEnrollment, KeptLevelMeasuresSpeechOnly) {
+    const std::vector<float> in = speechLike(2.0, 0.1f, 3);
+    EXPECT_NEAR(keptDb(in.data(), in.data(), in.size()), 0.0, 0.01);
+    std::vector<float> half = in;
+    for (float& v : half) {
+        v *= 0.5f;
+    }
+    EXPECT_NEAR(keptDb(in.data(), half.data(), in.size()), -6.02, 0.05);
+    const std::vector<float> silence(in.size(), 0.0f);
+    EXPECT_EQ(keptDb(in.data(), silence.data(), in.size()), -40.0);
+}
+
+TEST(VoxLockEnrollment, ChoosesTheCandidateThatKeepsEveryStyle) {
+    const std::vector<float> audio = guidedRecording();
+    const EnrollmentPlan plan = planEnrollment(audio);
+    ASSERT_GE(plan.candidates.size(), 3u);
+
+    // Stand-in for the network: the most typical window "locks on wrong" and cuts quiet speech by 30 dB (as a bad
+    // 3 s window really can, see the voice-sample evaluation); candidate 2 keeps everything; the rest lose 3 dB.
+    const std::vector<float>& bad = plan.candidates[0].sample;
+    const std::vector<float>& good = plan.candidates[2].sample;
+    const auto isolate = [&](const std::vector<float>& sample, const std::vector<std::vector<float>>& inputs,
+                             std::vector<std::vector<float>>& outputs) {
+        outputs.clear();
+        for (const std::vector<float>& input : inputs) {
+            float gain = 0.7f;
+            if (sample == good) {
+                gain = 1.0f;
+            } else if (sample == bad && test::rmsOf(input) < 0.04) {
+                gain = 0.03f;
+            }
+            std::vector<float> out = input;
+            for (float& v : out) {
+                v *= gain;
+            }
+            outputs.push_back(std::move(out));
+        }
+        return true;
+    };
+    std::vector<std::size_t> progress;
+    std::vector<double> scores;
+    const std::size_t best =
+        chooseCandidate(audio, plan, isolate, [&](std::size_t i, std::size_t) { progress.push_back(i); }, &scores);
+    EXPECT_EQ(best, 2u);
+    EXPECT_EQ(progress.size(), plan.candidates.size());
+    EXPECT_LT(scores[0], scores[2] - 20.0);
+}
+
+TEST(VoxLockEnrollment, KeepsTheTypicalWindowUnlessAnotherIsClearlyBetter) {
+    const std::vector<float> audio = guidedRecording();
+    const EnrollmentPlan plan = planEnrollment(audio);
+    // All candidates equal, then the others 0.25 dB better everywhere (0.5 in the score, mean + worst): the most
+    // typical window stays. 1.5 dB better everywhere: another one wins.
+    for (float otherGain : {1.0f, 1.03f, 1.19f}) {
+        const auto isolate = [&](const std::vector<float>& sample, const std::vector<std::vector<float>>& inputs,
+                                 std::vector<std::vector<float>>& outputs) {
+            outputs.clear();
+            const float gain = sample == plan.candidates[0].sample ? 0.9f : 0.9f * otherGain;
+            for (const std::vector<float>& input : inputs) {
+                std::vector<float> out = input;
+                for (float& v : out) {
+                    v *= gain;
+                }
+                outputs.push_back(std::move(out));
+            }
+            return true;
+        };
+        EXPECT_EQ(chooseCandidate(audio, plan, isolate) == 0u, otherGain < 1.1f) << otherGain;
+    }
+    // Failing candidates are skipped.
+    const auto failing = [&](const std::vector<float>& sample, const std::vector<std::vector<float>>& inputs,
+                             std::vector<std::vector<float>>& outputs) {
+        if (sample == plan.candidates[0].sample) {
+            return false;
+        }
+        outputs = inputs;
+        return true;
+    };
+    EXPECT_NE(chooseCandidate(audio, plan, failing), 0u);
+}
+
+TEST(VoxLockEnrollment, LoadsThePcm16Recording) {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / L"vs_test_voice_recording16.wav";
+    const std::vector<float> x = test::whiteNoise(16000 * 2, 0.1f);
+    std::string error;
+    ASSERT_TRUE(saveRecording(path, x, error)) << error;
+    std::vector<float> y;
+    ASSERT_TRUE(loadVoiceSample(path, y, error)) << error;
+    ASSERT_EQ(y.size(), x.size());
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        ASSERT_NEAR(y[i], x[i], 1.0 / 32768.0 + 1e-6);
+    }
+    std::filesystem::remove(path);
+}
+
 TEST(VoxLockEnrollment, SaveLoadRoundTrip) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / L"vs_test_voice_sample.wav";
     const std::vector<float> x = test::whiteNoise(16000 * 4, 0.1f);

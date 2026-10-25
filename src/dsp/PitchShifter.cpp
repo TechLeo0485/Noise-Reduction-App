@@ -13,7 +13,9 @@ namespace vs {
 namespace {
 // 35 ms analysis blocks (~29 Hz resolution, enough for low voices) with 4x overlap: ~35 ms latency.
 constexpr float kBlockSeconds = 0.035f;
-constexpr float kLowCutHz = 70.0f;
+constexpr float kLowCutHz = 90.0f;
+constexpr float kAntiBoomHz = 150.0f;
+constexpr float kAntiBoomMaxDb = 7.0f;
 constexpr float kPresenceHz = 3200.0f;
 } // namespace
 
@@ -42,6 +44,7 @@ void PitchShifter::reset() noexcept {
         engine_->stretch.reset();
     }
     lowCut_.reset();
+    antiBoom_.reset();
     presence_.reset();
     active_ = false;
     warmup_ = 0;
@@ -72,6 +75,9 @@ void PitchShifter::applySettings() noexcept {
     // Formant compensation keeps the formants in place under the transposition; Body then moves them on purpose.
     engine_->stretch.setFormantSemitones(-body_, true);
     presence_.setCoeffs(designPeaking(sampleRate_, kPresenceHz, 0.8f, presenceDb_));
+    // A lower pitch and lower formants both pile energy up below ~150 Hz, which sounds boomy rather than strong.
+    const float boomDb = std::clamp(-semitones_ + 0.5f * std::max(0.0f, body_), 0.0f, kAntiBoomMaxDb);
+    antiBoom_.setCoeffs(designLowShelf(sampleRate_, kAntiBoomHz, -boomDb));
     dirty_ = false;
 }
 
@@ -97,6 +103,7 @@ void PitchShifter::process(float* samples, std::size_t count) noexcept {
         // Start from a clean state; the dry signal plays until the shifter's output is valid.
         engine_->stretch.reset();
         lowCut_.reset();
+        antiBoom_.reset();
         presence_.reset();
         active_ = true;
         warmup_ = latency_;
@@ -109,7 +116,7 @@ void PitchShifter::process(float* samples, std::size_t count) noexcept {
     float* out[1] = {samples};
     engine_->stretch.process(in, static_cast<int>(count), out, static_cast<int>(count));
     for (std::size_t i = 0; i < count; ++i) {
-        samples[i] = presence_.process(lowCut_.process(samples[i]));
+        samples[i] = presence_.process(antiBoom_.process(lowCut_.process(samples[i])));
     }
 
     const bool ready = warmup_ <= 0;

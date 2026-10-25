@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import VoiceStudio
 
-// Everyday page: is everything working, how do I sound, the two choices people change most
-// (voice character and noise removal) and a quick listen. Details live on the other pages.
+// Everyday page: is everything working, how do I sound, and the three choices people change most (how
+// you sound, background noise, only my voice). These choices live here only; the other pages hold details.
 ScreenPage {
     id: page
 
@@ -12,6 +12,8 @@ ScreenPage {
     readonly property var su: backend.setup
     readonly property bool allOk: su.allOk === true
     readonly property bool muted: backend.params.masterMute === true
+    readonly property var iso: backend.isolation
+    readonly property bool isolationOn: backend.params.isolationEnabled === true
     readonly property string checkState: backend.voiceCheck.state !== undefined ? backend.voiceCheck.state : "idle"
     readonly property bool checkBusy: checkState === "recording" || checkState === "playing"
 
@@ -59,18 +61,19 @@ ScreenPage {
                     color: Theme.textSecondary
                     font.pixelSize: 13
                     textFormat: Text.StyledText
-                    text: !backend.engineEnabled ? "Turn on <b>Audio engine</b> at the top right to start."
-                          : page.allOk ? "Your voice is sent to <b>" + page.su.outputName + "</b>. In Discord, Zoom, Teams or "
-                                         + "your game, pick the virtual microphone as your microphone (for VB-CABLE: <b>CABLE Output</b>)."
+                    text: !backend.engineEnabled ? "Nothing is sent to your calls until you turn it on."
+                          : page.muted ? "Click <b>Microphone muted</b> in the sidebar to talk again."
+                          : page.allOk ? "In Discord, Zoom, Teams or your game, choose <b>" + page.su.appMicName
+                                         + "</b> as your microphone."
                           : "Follow the steps below. It takes less than a minute."
                 }
             }
             VsButton {
-                text: page.muted ? "Unmute" : "Mute"
-                danger: !page.muted
-                primary: page.muted
+                visible: !backend.engineEnabled
+                text: "Turn on"
+                primary: true
                 implicitHeight: 42
-                onClicked: backend.setParam("masterMute", !page.muted)
+                onClicked: backend.engineEnabled = true
             }
         }
     }
@@ -99,6 +102,8 @@ ScreenPage {
             status: page.su.cableInstalled ? "ok" : "problem"
             title: page.su.cableInstalled ? "Virtual microphone found" : "No virtual microphone found"
             detail: page.su.cableInstalled ? "This is how other apps receive your voice."
+                    : page.su.virtualMic !== undefined && page.su.virtualMic !== "notInstalled"
+                      ? "The VoiceStudio Virtual Microphone is installed but not working yet - Setup explains why."
                     : "Install VB-CABLE (free) and restart your PC, or mark your own virtual microphone in Setup."
             actionText: page.su.cableInstalled ? "" : "Open Setup"
             onActionClicked: page.openPage("setup")
@@ -131,7 +136,7 @@ ScreenPage {
         leftContent: [
             Card {
                 title: "Your voice"
-                icon: ""
+                icon: "\uE720"
                 LevelMeter { label: "Your microphone"; levelDb: backend.inputLevelDb }
                 LevelMeter { label: "What others hear"; levelDb: backend.outputLevelDb }
                 VsSlider {
@@ -153,27 +158,9 @@ ScreenPage {
             },
 
             Card {
-                title: "Voice character"
-                subtitle: "How your voice sounds to others"
-                icon: ""
-                ChipRow {
-                    model: backend.voiceLooks
-                    current: backend.voiceLook
-                    onPicked: (key) => backend.applyVoiceLook(key)
-                }
-                LinkText {
-                    text: backend.voiceLook === "" ? "Custom character - adjust it on the Voice page"
-                                                   : "Fine-tune depth, body and tone on the Voice page"
-                    onClicked: page.openPage("voice")
-                }
-            }
-        ]
-
-        rightContent: [
-            Card {
                 title: "Hear yourself"
-                subtitle: "Check how you sound to others. Use headphones."
-                icon: ""
+                subtitle: "Use headphones"
+                icon: "\uE7F6"
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 12
@@ -202,27 +189,72 @@ ScreenPage {
                 }
                 VsSwitch {
                     label: "Listen live"
-                    description: "Hear yourself in your headphones while you talk"
+                    description: "Hear yourself while you talk. Headphones are chosen in Setup."
                     checked: backend.monitorEnabled
                     onToggled: (value) => backend.monitorEnabled = value
+                }
+            }
+        ]
+
+        rightContent: [
+            Card {
+                title: "Sound like"
+                subtitle: "Still you - just the way you want to come across"
+                icon: "\uE9E9"
+                ChipRow {
+                    model: backend.voiceLooks
+                    current: backend.voiceLook
+                    onPicked: (key) => backend.applyVoiceLook(key)
+                }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textSecondary
+                    font.pixelSize: 12
+                    text: {
+                        const list = backend.voiceLooks
+                        for (let i = 0; i < list.length; ++i)
+                            if (list[i].key === backend.voiceLook) return list[i].description
+                        return "Your own mix of depth, body and presence."
+                    }
+                }
+                LinkText {
+                    text: "Fine-tune on the Voice page"
+                    onClicked: page.openPage("voice")
                 }
             },
 
             Card {
-                title: "Noise removal"
-                subtitle: "Cleans up background noise around you"
-                icon: ""
+                title: "Background noise"
+                subtitle: "Fans, keyboards, traffic, hum"
+                icon: "\uE9D9"
                 NoiseLevelPicker {}
+            },
+
+            Card {
+                title: "Only my voice"
+                subtitle: "Remove other people talking near you"
+                icon: "\uE716"
+                VsSwitch {
+                    label: page.isolationOn ? "On - only your voice is sent" : "Off"
+                    description: page.iso.enrolled === true ? "Uses the voice you recorded on this computer."
+                                 : "Record your voice once on the Clean-up page first."
+                    enabled: page.iso.available === true || page.isolationOn
+                    checked: page.isolationOn
+                    onToggled: (value) => backend.setParam("isolationEnabled", value)
+                }
                 Text {
-                    visible: backend.params.isolationEnabled === true
-                    text: "Only your voice is sent: strict voice isolation is on."
-                    color: Theme.success
-                    font.pixelSize: 12
-                    wrapMode: Text.WordWrap
+                    visible: page.iso.silencing === true
                     Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.warning
+                    font.pixelSize: 12
+                    text: page.iso.enrolled !== true && page.iso.state !== "loading"
+                          ? "Your microphone is silenced until you record your voice."
+                          : "Your microphone is silenced while isolation gets ready..."
                 }
                 LinkText {
-                    text: "More clean-up options"
+                    text: page.iso.enrolled === true ? "Record more of your voice" : "Record my voice"
                     onClicked: page.openPage("cleanup")
                 }
             }

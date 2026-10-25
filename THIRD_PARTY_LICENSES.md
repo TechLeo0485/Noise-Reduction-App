@@ -8,6 +8,8 @@
 | GoogleTest | 1.15.2 | BSD-3-Clause | Tests only | No |
 | ONNX Runtime (Microsoft) | 1.31.0, CPU package | MIT | Strict voice isolation inference | Yes, `onnxruntime.dll` (loaded at runtime) |
 | VoxLock (Arbaz Siddiqui), models `enroll.onnx` + `chunk_int8_full.onnx`, revision a50f4e1d | 1.x | Apache-2.0 (weights and code); model code derived from WeSep (Apache-2.0) | Strict voice isolation | Yes, `models/voxlock/`. `src/ai/voxlock/VoxLockStream.cpp` and `VoxLockEnrollment.cpp` port its streaming code |
+| SysVAD virtual audio driver sample (Microsoft, Windows-driver-samples, commit bb68ed5e) | 2026-10 | MIT | VoiceStudio Virtual Microphone driver (`driver/`, modified) | Yes, `driver/vsvirtualmic.sys` (optional installer task) |
+| Windows Driver Kit (Microsoft), NuGet `Microsoft.Windows.WDK.x64` | 10.0.28000.2526 | WDK license | Building the driver | No (build tool only) |
 | Microsoft Windows SDK (WASAPI, Core Audio, DXGI, AVRT, DbgHelp) | system | Windows SDK license | Platform APIs | System components |
 | VB-CABLE (VB-Audio Software), www.vb-cable.com | Driver Pack 45 | Donationware, proprietary | Virtual microphone | **Yes, inside the setup** (optional task, silent install). VB-Audio allows embedding VB-CABLE with silent installation when users can identify it as a VB-Audio product and are able to donate ([licensing](https://vb-audio.com/Services/licensing.htm)); setup names it, credits www.vb-cable.com and links to the author. Company / professional deployments where users cannot donate need licenses from VB-Audio's webshop. Only the standard VB-CABLE may be bundled (not A+B / C+D). |
 
@@ -18,6 +20,7 @@ Before release, copy the full license texts into `licenses/` in the installer:
 - RNNoise: `COPYING` from the RNNoise source archive.
 - ONNX Runtime: `LICENSE` and `ThirdPartyNotices.txt` from the ONNX Runtime package.
 - Signalsmith Stretch / Linear: `LICENSE.txt` from each source archive.
+- SysVAD: `driver/LICENSE.sysvad.txt` (MIT, Microsoft Corporation).
 - VoxLock: `LICENSE` (Apache-2.0) and `NOTICE` from https://huggingface.co/arbazsiddiqui/voxlock
   ("VoxLock, Copyright 2026 Arbaz Siddiqui"; wesep/ from the REAL-TSE WeSep baseline, Apache-2.0).
 
