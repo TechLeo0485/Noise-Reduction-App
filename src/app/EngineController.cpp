@@ -947,6 +947,24 @@ void EngineController::updateStats() {
     s["isolationSilencedFrames"] = static_cast<qulonglong>(iso.silencedFrames.load());
     s["isolationIsolatedFrames"] = static_cast<qulonglong>(iso.isolatedFrames.load());
 
+    // One health line per minute while isolation is on, so problems on other PCs can be diagnosed from the log.
+    if (isolationOn && running) {
+        if (++isolationHealthTicks_ >= 120) { // stats run every 500 ms
+            isolationHealthTicks_ = 0;
+            const IsolationStatus st = supervisor_->engine().isolator().status();
+            const std::uint64_t underruns = iso.underruns.load();
+            logInfo("Isolation health: state " + std::string(isolationStateName(st.state)) + ", " +
+                    std::to_string(st.framesPerRun * 8) + " ms chunks, latency " +
+                    std::to_string(static_cast<int>(iso.latencyMs.load())) + " ms, inference p50 " +
+                    std::to_string(percentileMs(0.50)) + " ms / p99 " + std::to_string(percentileMs(0.99)) +
+                    " ms, late chunks +" + std::to_string(underruns - isolationUnderrunsLogged_) + " (total " +
+                    std::to_string(underruns) + "), inference errors " + std::to_string(iso.modelFailures.load()));
+            isolationUnderrunsLogged_ = underruns;
+        }
+    } else {
+        isolationHealthTicks_ = 0;
+    }
+
     s["processCpuPercent"] = proc.cpuPercent >= 0.0 ? round1(proc.cpuPercent) : -1.0;
     s["workingSetMb"] = round1(proc.workingSetMb);
     s["privateMb"] = round1(proc.privateBytesMb);
@@ -1010,7 +1028,7 @@ void EngineController::pollIsolation() {
             enrollMessage_ = QStringLiteral("The audio engine stopped during recording. Please try again.");
         } else if (isolator.recordingState() == VoiceIsolator::RecordingState::Ready) {
             enrollSubmitRevision_ = isolator.statusRevision();
-            isolator.enroll(isolator.takeRecording16k());
+            isolator.enroll(isolator.takeRecording16k(), status_.info.inputName);
             enrollPhase_ = QStringLiteral("processing");
             enrollMessage_.clear();
         }
@@ -1055,6 +1073,11 @@ void EngineController::refreshIsolation() {
     iso["threads"] = st.threads;
     iso["calibrationP50Ms"] = round2(st.calibrationP50Ms);
     iso["calibrationP95Ms"] = round2(st.calibrationP95Ms);
+    iso["adaptations"] = st.adaptations;
+    // The voice sample only matches the microphone it was recorded with.
+    iso["enrolledMicrophone"] = qs(st.enrolledMicrophone);
+    iso["microphoneMismatch"] = st.enrolled && !st.enrolledMicrophone.empty() && !status_.info.inputName.empty() &&
+                                st.enrolledMicrophone != status_.info.inputName;
     isolation_ = iso;
     emit isolationChanged();
 }

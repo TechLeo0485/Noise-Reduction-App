@@ -4,15 +4,12 @@
 #include "core/RealtimeThread.h"
 #include "diagnostics/Logger.h"
 
-#if defined(VOICESTUDIO_HAS_VOXLOCK)
-#include "ai/voxlock/VoxLockRuntime.h"
-#endif
-
 #include <windows.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <random>
 
 namespace vs {
@@ -36,6 +33,11 @@ constexpr std::size_t kMaxTrim = kFrameSizeConst / 2; // at most 5 ms per step, 
 constexpr float kQuietPeak = 0.003f;           // about -50 dBFS: a trim here is inaudible
 constexpr int kThreads = 2;                    // intra-op threads per inference (measured: 4 is no faster)
 constexpr double kHopMs = 1000.0 * voxlock::kHop / voxlock::kSampleRate;
+constexpr int kMaxFramesPerRun = 5;            // 40 ms chunks: the largest step the monitor escalates to
+constexpr std::uint64_t kUnderrunsToAdapt = 4; // late chunks within kAdaptWindow that trigger a larger chunk
+constexpr auto kAdaptWindow = std::chrono::seconds(10);
+constexpr std::uint64_t kFailuresToStop = 3;   // inference errors within kFailureWindow that end isolation
+constexpr auto kFailureWindow = std::chrono::seconds(30);
 
 std::size_t burstSamples48k(int framesPerRun) {
     // One inference releases K hops of 16 kHz audio, i.e. 3 * K * 128 samples at 48 kHz.
@@ -140,7 +142,16 @@ void VoiceIsolator::loaderMain() {
     preferPerformanceCores(); // calibration must measure the cores the worker will run on
     std::unique_lock lock(loaderMutex_);
     for (;;) {
-        loaderWake_.wait(lock, [this] { return quit_ || !loaderTasks_.empty(); });
+        if (!loaderWake_.wait_for(lock, std::chrono::seconds(1), [this] { return quit_ || !loaderTasks_.empty(); })) {
+            lock.unlock();
+            try {
+                monitor();
+            } catch (const std::exception& e) {
+                logError(std::string("Voice isolation monitor: ") + e.what());
+            }
+            lock.lock();
+            continue;
+        }
         if (quit_) {
             break;
         }
@@ -212,8 +223,12 @@ void VoiceIsolator::initialize(const std::filesystem::path& runtimeDir, const st
         if (!enrollmentFile_.empty() && std::filesystem::exists(enrollmentFile_, ec)) {
             std::vector<float> voice;
             if (voxlock::loadVoiceSample(enrollmentFile_, voice, error) && prepareVoice(voice, error)) {
+                std::string microphone;
+                std::ifstream in(microphoneFile());
+                std::getline(in, microphone);
                 std::lock_guard lock(statusMutex_);
                 status_.enrolled = true;
+                status_.enrolledMicrophone = microphone;
                 return;
             }
             logWarning("Saved voice sample could not be used: " + error);
@@ -240,11 +255,11 @@ void VoiceIsolator::initializeWithModel(ModelFactory factory, int framesPerRun) 
     setStatus(IsolationState::Ready, "Isolating your voice.", false);
 }
 
-void VoiceIsolator::enroll(std::vector<float> audio16k) {
+void VoiceIsolator::enroll(std::vector<float> audio16k, std::string microphone) {
     if (state() == IsolationState::NotBuilt) {
         return;
     }
-    post([this, audio = std::move(audio16k)] {
+    post([this, audio = std::move(audio16k), microphone = std::move(microphone)] {
         const IsolationState before = state();
         std::string error;
         if (!voxlock::validateVoiceSample(audio, error)) {
@@ -266,8 +281,13 @@ void VoiceIsolator::enroll(std::vector<float> audio16k) {
             setStatus(IsolationState::Ready, "Isolating your voice, but it could not be saved for next time: " + error, false);
             return;
         }
+        if (!enrollmentFile_.empty()) {
+            std::ofstream(microphoneFile(), std::ios::trunc) << microphone << '\n';
+        }
+        logInfo("Voice enrolled" + (microphone.empty() ? std::string() : " with " + microphone));
         std::lock_guard lock(statusMutex_);
         status_.enrolled = true;
+        status_.enrolledMicrophone = microphone;
     });
 }
 
@@ -279,7 +299,11 @@ void VoiceIsolator::deleteEnrollment() {
         std::error_code ec;
         if (!enrollmentFile_.empty()) {
             std::filesystem::remove(enrollmentFile_, ec);
+            std::error_code ignored;
+            std::filesystem::remove(microphoneFile(), ignored);
         }
+        tensors_ = {};
+        haveTensors_ = false;
         {
             std::lock_guard lock(modelMutex_);
             pendingModel_.reset();
@@ -293,6 +317,7 @@ void VoiceIsolator::deleteEnrollment() {
         {
             std::lock_guard lock(statusMutex_);
             status_.enrolled = false;
+            status_.enrolledMicrophone.clear();
             status_.framesPerRun = 0;
         }
         logInfo("Voice sample deleted");
@@ -388,6 +413,9 @@ bool VoiceIsolator::prepareVoice(const std::vector<float>& audio16k, std::string
         }
     }
     publish(std::move(chosen), chosenK);
+    tensors_ = std::move(tensors);
+    haveTensors_ = true;
+    health_.clear();
     {
         std::lock_guard lock(statusMutex_);
         status_.framesPerRun = chosenK;
@@ -408,6 +436,84 @@ bool VoiceIsolator::prepareVoice(const std::vector<float>& audio16k, std::string
     error = "not included in this build";
     return false;
 #endif
+}
+
+std::filesystem::path VoiceIsolator::microphoneFile() const {
+    std::filesystem::path path = enrollmentFile_;
+    path += L".microphone.txt";
+    return path;
+}
+
+// Runs on the loader thread about once per second. Turns persistent problems into actions instead of
+// leaving the user with repeated dropouts or an unexplained silent microphone:
+//  - the worker keeps falling behind (several late chunks in 10 s): rebuild the session with a larger
+//    chunk (+8 ms latency per step, up to 40 ms chunks);
+//  - inference keeps failing: stop with an error message (the output stays silent while enabled).
+void VoiceIsolator::monitor() {
+    if (state() != IsolationState::Ready) {
+        health_.clear();
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const HealthSample sample{now, metrics_.underruns.load(std::memory_order_relaxed),
+                              metrics_.modelFailures.load(std::memory_order_relaxed)};
+    health_.push_back(sample);
+    while (!health_.empty() && now - health_.front().time > kFailureWindow) {
+        health_.pop_front();
+    }
+
+    if (sample.failures - health_.front().failures >= kFailuresToStop) {
+        logError("Voice isolation stopped: repeated inference errors");
+        setStatus(IsolationState::Error,
+                  "Voice isolation keeps failing on this computer. While it is switched on your microphone stays "
+                  "silent: switch it off, or restart VoiceStudio.",
+                  false);
+        health_.clear();
+        return;
+    }
+
+    std::uint64_t underrunsBefore = sample.underruns;
+    for (const HealthSample& h : health_) {
+        if (now - h.time <= kAdaptWindow) {
+            underrunsBefore = h.underruns;
+            break;
+        }
+    }
+    const int k = status().framesPerRun;
+    if (sample.underruns - underrunsBefore < kUnderrunsToAdapt || k <= 0 || k >= kMaxFramesPerRun) {
+        return;
+    }
+    const int next = k + 1;
+    std::unique_ptr<voxlock::IChunkModel> model;
+    std::string error;
+    if (testFactory_) {
+        model = testFactory_(next);
+    } else if (haveTensors_ && runtime_) {
+#if defined(VOICESTUDIO_HAS_VOXLOCK)
+        voxlock::ChunkModelOptions options;
+        options.framesPerRun = next;
+        options.threads = kThreads;
+        model = runtime_->createChunkModel(tensors_, options, error);
+#endif
+    }
+    if (!model) {
+        logWarning("Voice isolation could not switch to a larger chunk: " + error);
+        health_.clear();
+        return;
+    }
+    publish(std::move(model), next);
+    logWarning("Voice isolation fell behind (" + std::to_string(sample.underruns - underrunsBefore) +
+               " late chunks in 10 s); chunk size raised to " + std::to_string(next * 8) + " ms");
+    {
+        std::lock_guard lock(statusMutex_);
+        status_.framesPerRun = next;
+        ++status_.adaptations;
+    }
+    setStatus(IsolationState::Ready,
+              "This computer was too busy for the previous setting; isolation now works in " + std::to_string(next * 8) +
+                  " ms steps (" + std::to_string((next - k) * 8) + " ms more delay) to avoid dropouts.",
+              false);
+    health_.clear();
 }
 
 // ---- Enrollment recording ------------------------------------------------------------------------------

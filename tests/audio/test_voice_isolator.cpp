@@ -237,3 +237,45 @@ TEST(Parameters, IsolationIsOffByDefaultAndNotPresetScoped) {
         EXPECT_TRUE(p.getBool(ParamId::IsolationEnabled)) << preset.name;
     }
 }
+
+TEST(VoiceIsolator, RaisesChunkSizeWhenTheCpuFallsBehind) {
+    VoiceIsolator isolator;
+    isolator.initializeWithModel(identity(nullptr, 25), 2); // 25 ms per call: too slow for 16 ms chunks
+    const std::vector<float> x = testSignal(48000 * 6);
+    const RunResult r = run(isolator, x, true, 10);
+    expectFailClosed(x, r);
+    const IsolationStatus st = isolator.status();
+    EXPECT_GE(st.framesPerRun, 3) << "the monitor should have switched to larger chunks";
+    EXPECT_GE(st.adaptations, 1);
+    EXPECT_EQ(st.state, IsolationState::Ready);
+}
+
+TEST(VoiceIsolator, PersistentInferenceFailureEndsInErrorStateAndStaysSilent) {
+    std::atomic<int> failAfter{0};
+    VoiceIsolator isolator;
+    isolator.initializeWithModel(identity(&failAfter), 2);
+    const std::vector<float> x = testSignal(48000 * 4);
+    const RunResult r = run(isolator, x, true, 10);
+    for (float v : r.out) {
+        ASSERT_EQ(v, 0.0f);
+    }
+    EXPECT_EQ(isolator.state(), IsolationState::Error);
+    EXPECT_NE(isolator.status().message.find("keeps failing"), std::string::npos);
+}
+
+TEST(VoiceIsolator, RemembersTheEnrollmentMicrophone) {
+    VoiceIsolator isolator;
+    isolator.initializeWithModel(identity(), 2);
+    std::vector<float> speech = test::whiteNoise(16000 * 5, 0.1f);
+    for (std::size_t i = 0; i < speech.size(); ++i) {
+        if ((i / 2400) % 3 == 2) {
+            speech[i] *= 0.01f;
+        }
+    }
+    isolator.enroll(speech, "Microphone (USB Audio Device)");
+    isolator.waitIdle();
+    EXPECT_EQ(isolator.status().enrolledMicrophone, "Microphone (USB Audio Device)");
+    isolator.deleteEnrollment();
+    isolator.waitIdle();
+    EXPECT_TRUE(isolator.status().enrolledMicrophone.empty());
+}

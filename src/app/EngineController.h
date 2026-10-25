@@ -255,6 +255,8 @@ private:
     std::uint64_t isolationRevisionSeen_ = ~0ull;
     std::vector<float> isolationInferenceUs_; // recent chunk.onnx times (ring)
     std::size_t isolationInferenceNext_ = 0;
+    int isolationHealthTicks_ = 0;
+    std::uint64_t isolationUnderrunsLogged_ = 0;
     QVariantMap setup_;
     bool micHeard_ = false; // a voice-level signal was seen on the current microphone
     std::thread playbackThread_;

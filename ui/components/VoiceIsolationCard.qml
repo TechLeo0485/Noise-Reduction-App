@@ -63,6 +63,16 @@ Card {
         Layout.fillWidth: true
     }
 
+    Text {
+        visible: root.iso.microphoneMismatch === true
+        text: "Your voice was recorded with \"" + root.iso.enrolledMicrophone + "\", but you are now using \""
+              + backend.inputName + "\". Re-record your voice with this microphone for the best isolation."
+        color: Theme.warning
+        font.pixelSize: 12
+        wrapMode: Text.WordWrap
+        Layout.fillWidth: true
+    }
+
     // ---- Voice enrollment -------------------------------------------------------------------------
     RowLayout {
         Layout.fillWidth: true

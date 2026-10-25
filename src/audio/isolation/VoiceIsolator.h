@@ -1,11 +1,13 @@
 #pragma once
 
+#include "ai/voxlock/VoxLockRuntime.h"
 #include "ai/voxlock/VoxLockStream.h"
 #include "audio/buffers/Resampler.h"
 #include "core/SpscRingBuffer.h"
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -18,10 +20,6 @@
 #include <vector>
 
 namespace vs {
-
-namespace voxlock {
-class Runtime;
-}
 
 enum class IsolationState : int {
     NotBuilt = 0,        // built without VOICESTUDIO_WITH_VOXLOCK
@@ -44,6 +42,8 @@ struct IsolationStatus {
     int threads = 0;
     double calibrationP50Ms = 0.0;
     double calibrationP95Ms = 0.0;
+    std::string enrolledMicrophone; // microphone the voice sample was recorded with (empty if unknown)
+    int adaptations = 0;            // times the chunk size was raised at runtime because the CPU fell behind
 };
 
 struct IsolationFrameInfo {
@@ -84,8 +84,10 @@ public:
     void initializeWithModel(ModelFactory factory, int framesPerRun = 2);
 
     // Validates and saves a 16 kHz recording as the enrolled voice, then switches the model to it.
-    // Asynchronous. On a validation error the previous voice stays active and status().message explains.
-    void enroll(std::vector<float> audio16k);
+    // `microphone` (the device it was recorded with) is saved alongside, so the UI can warn when a
+    // different microphone is in use. Asynchronous. On a validation error the previous voice stays
+    // active and status().message explains.
+    void enroll(std::vector<float> audio16k, std::string microphone = {});
     // Deletes the saved voice. While isolation is enabled the output is silent until a new voice is enrolled.
     void deleteEnrollment();
     // Blocks until queued control work (initialize/enroll/delete) has finished. For tests and tools.
@@ -137,6 +139,8 @@ private:
     void loaderMain();
     void workerMain();
     void setStatus(IsolationState state, const std::string& message, bool busy);
+    void monitor();
+    [[nodiscard]] std::filesystem::path microphoneFile() const;
     bool prepareVoice(const std::vector<float>& audio16k, std::string& error);
     void publish(std::unique_ptr<voxlock::IChunkModel> model, int framesPerRun);
     void requestRestart() noexcept;
@@ -153,6 +157,16 @@ private:
     std::filesystem::path enrollmentFile_;
     std::unique_ptr<voxlock::Runtime> runtime_; // loader thread only
     ModelFactory testFactory_;
+    voxlock::EnrollmentTensors tensors_;        // loader thread only: current voice, for rebuilding sessions
+    bool haveTensors_ = false;
+
+    // Health monitor (loader thread, once per second while idle): underruns and inference failures over time.
+    struct HealthSample {
+        std::chrono::steady_clock::time_point time;
+        std::uint64_t underruns;
+        std::uint64_t failures;
+    };
+    std::deque<HealthSample> health_;
 
     // Loader thread
     std::mutex loaderMutex_;

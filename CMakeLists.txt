@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(VoiceStudio
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Ultra-low-latency local noise suppression and voice processing for Windows"
     LANGUAGES C CXX)
 
@@ -181,6 +181,9 @@ if(VOICESTUDIO_BUILD_APP)
         TARGET VoiceStudio
         OUTPUT_SCRIPT VOICESTUDIO_DEPLOY_SCRIPT
         NO_UNSUPPORTED_PLATFORM_ERROR)
+    # Qt's deploy script would put the Qt DLLs in bin/ while VoiceStudio.exe installs to the root, so the
+    # installed app could not start. Deploy everything next to the exe instead.
+    install(CODE "set(QT_DEPLOY_BIN_DIR \".\")")
     install(SCRIPT ${VOICESTUDIO_DEPLOY_SCRIPT})
     install(FILES LICENSE THIRD_PARTY_LICENSES.md README.md DESTINATION . OPTIONAL)
     if(VOICESTUDIO_WITH_VOXLOCK)

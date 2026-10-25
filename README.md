@@ -112,10 +112,16 @@ No benchmark numbers are published in this repository until they have been measu
 scripts\package.ps1            # Release build, cmake --install (runs windeployqt), Inno Setup installer
 ```
 
-Produces `dist\VoiceStudio-<version>-setup.exe` if [Inno Setup 6](https://jrsoftware.org/isinfo.php)
-is installed, otherwise a portable folder in `build\install\`. VB-CABLE is **not** redistributed;
-users install it separately. Uninstall through *Settings > Apps*; user data in
-`%LOCALAPPDATA%\VoiceStudio` is removed only if you choose that option in the uninstaller.
+Produces `dist\VoiceStudio-<version>-setup.exe` (about 105 MB) if [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+is installed (`winget install JRSoftware.InnoSetup`), otherwise a portable folder in `build\install\`.
+The setup file is self-contained: the app, Qt, ONNX Runtime, the VoxLock models and the Microsoft Visual
+C++ runtime (installed only when the PC's copy is missing or older than the one the app was built with).
+
+VB-CABLE is **not** redistributed. Setup detects it and, if it is missing, offers the download page;
+users install it and restart Windows. The setup is not code-signed, so Windows SmartScreen shows
+"Windows protected your PC" on first run (*More info > Run anyway*). Uninstall through *Settings > Apps*;
+user data in `%LOCALAPPDATA%\VoiceStudio` (settings, logs, the saved voice sample) is removed only if you
+choose that option in the uninstaller (silent uninstalls keep it).
 
 ## Documentation
 
