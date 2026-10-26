@@ -129,8 +129,11 @@ if(VOICESTUDIO_BUILD_APP)
         src/app/TrayIcon.h
         src/app/CrashHandler.cpp
         src/app/VoiceStudio.rc)
-    # Window and tray icon (the .rc embeds the same file as the exe icon).
-    qt_add_resources(VoiceStudio "app_icons" PREFIX "/icons" BASE ui/icons FILES ui/icons/voicestudio.ico)
+    # Window and tray icon (the .rc embeds the same file as the exe icon). Icons come from logo.png via
+    # scripts/make-icons.ps1; the resource compiler does not track the .ico, so name it as a dependency.
+    set_source_files_properties(src/app/VoiceStudio.rc PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ui/icons/voicestudio.ico")
+    qt_add_resources(VoiceStudio "app_icons" PREFIX "/icons" BASE ui/icons FILES ui/icons/voicestudio.ico ui/icons/voicestudio.png)
     # The Help page renders the user guide from the binary.
     qt_add_resources(VoiceStudio "user_guide" PREFIX "/docs" BASE docs FILES docs/user-guide.md)
 

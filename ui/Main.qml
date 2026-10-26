@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Effects
 import QtQuick.Layouts
 import VoiceStudio
 
@@ -76,21 +77,40 @@ ApplicationWindow {
                     Layout.topMargin: 8
                     Layout.leftMargin: 6
                     Layout.bottomMargin: 22
-                    Rectangle {
-                        implicitWidth: 38
-                        implicitHeight: 38
-                        radius: 11
-                        gradient: Gradient {
-                            orientation: Gradient.Vertical
-                            GradientStop { position: 0.0; color: "#8C97FF" }
-                            GradientStop { position: 1.0; color: "#5B4BDB" }
+                    // The logo (ui/icons/voicestudio.png, made from logo.png by scripts/make-icons.ps1) with rounded corners.
+                    Item {
+                        implicitWidth: 42
+                        implicitHeight: 42
+                        Image {
+                            id: logo
+                            anchors.fill: parent
+                            source: "qrc:/icons/voicestudio.png"
+                            sourceSize: Qt.size(256, 256) // decoded well above display size: sharp on high-DPI screens
+                            fillMode: Image.PreserveAspectCrop
+                            smooth: true
+                            mipmap: true
+                            visible: false
                         }
-                        Text {
-                            anchors.centerIn: parent
-                            text: "\uE720"
-                            font.family: Theme.iconFont
-                            font.pixelSize: 17
-                            color: Theme.textOnAccent
+                        Rectangle {
+                            id: logoMask
+                            anchors.fill: parent
+                            radius: 12
+                            visible: false
+                            layer.enabled: true
+                        }
+                        MultiEffect {
+                            anchors.fill: parent
+                            source: logo
+                            maskEnabled: true
+                            maskSource: logoMask
+                            maskThresholdMin: 0.5
+                            maskSpreadAtMin: 1.0
+                        }
+                        Rectangle { // hairline so the dark logo stands off the dark sidebar
+                            anchors.fill: parent
+                            radius: 12
+                            color: "transparent"
+                            border.color: Qt.rgba(1, 1, 1, 0.12)
                         }
                     }
                     ColumnLayout {

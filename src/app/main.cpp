@@ -76,7 +76,10 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationName(QStringLiteral("VoiceStudio"));
     QApplication::setApplicationName(QStringLiteral("VoiceStudio"));
     QApplication::setApplicationVersion(QStringLiteral(VOICESTUDIO_VERSION));
-    QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/voicestudio.ico")));
+    // The .ico holds 16..256 px; the 1024 px PNG keeps the logo sharp on high-DPI screens (scripts/make-icons.ps1).
+    QIcon appIcon(QStringLiteral(":/icons/voicestudio.ico"));
+    appIcon.addFile(QStringLiteral(":/icons/voicestudio.png"));
+    QApplication::setWindowIcon(appIcon);
     QQuickStyle::setStyle(QStringLiteral("Basic"));
     // --minimized: started with Windows; stay in the tray until the user opens the window.
     const bool startMinimized = QApplication::arguments().contains(QStringLiteral("--minimized"));
