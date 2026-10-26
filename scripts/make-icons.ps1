@@ -7,8 +7,9 @@
     ui\icons\voicestudio.ico  - Windows icon (exe, taskbar, tray, installer): 16..256 px. The 256 px image is stored as
                                 PNG (lossless); the smaller ones as 32-bit bitmaps, which every Windows tool accepts.
     ui\icons\voicestudio.png  - 1024 px copy for the window icon and the sidebar.
-  Small sizes zoom in on the centre of the logo (the microphone), so the icon stays recognisable at 16-48 px instead of
-  shrinking the whole picture into a blur. Resampling is high-quality bicubic.
+  logo.png is drawn by scripts\draw-logo.ps1 as a flat mark that stays readable at every size, so all sizes use the whole
+  logo (zoom 1). For a detailed picture logo, lower the small sizes in the per-size plan below so they zoom in on
+  the centre instead of shrinking into a blur. Resampling is high-quality bicubic.
 
 .EXAMPLE
   scripts\make-icons.ps1
@@ -100,8 +101,8 @@ $src = [System.Drawing.Bitmap]::FromFile((Resolve-Path $Logo))
 try {
     if ($src.Width -ne $src.Height) { Write-Warning "logo is not square ($($src.Width) x $($src.Height)); using the centre square" }
 
-    # Zoom per icon size: the whole logo from 128 px up, closer in below so the microphone stays readable.
-    $plan = [ordered]@{ 16 = 0.42; 20 = 0.42; 24 = 0.45; 32 = 0.5; 40 = 0.54; 48 = 0.58; 64 = 0.68; 96 = 0.85; 128 = 1.0; 256 = 1.0 }
+    # Zoom per icon size (1 = whole logo). The flat logo needs no zoom; lower the small sizes for a detailed picture.
+    $plan = [ordered]@{ 16 = 1.0; 20 = 1.0; 24 = 1.0; 32 = 1.0; 40 = 1.0; 48 = 1.0; 64 = 1.0; 96 = 1.0; 128 = 1.0; 256 = 1.0 }
     $list = New-Object 'System.Collections.Generic.List[System.Drawing.Bitmap]'
     foreach ($entry in $plan.GetEnumerator()) { # (an ordered dictionary's [int] indexer is by position, not key)
         $list.Add([VsIcons]::Render($src, [int]$entry.Key, [double]$entry.Value, $CenterX, $CenterY))

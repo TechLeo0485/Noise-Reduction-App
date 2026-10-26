@@ -181,7 +181,7 @@ if(VOICESTUDIO_BUILD_APP)
             ui/screens/HelpScreen.qml)
 
     target_link_libraries(VoiceStudio PRIVATE
-        vs_core vs_settings Qt6::Gui Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 dbghelp)
+        vs_core vs_settings Qt6::Gui Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 dbghelp dwmapi)
     voicestudio_deploy_voxlock(VoiceStudio)
 
     # Copy the Qt DLLs, plugins and QML modules next to the exe after every build so it runs

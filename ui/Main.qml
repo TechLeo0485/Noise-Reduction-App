@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls.Basic
-import QtQuick.Effects
 import QtQuick.Layouts
 import VoiceStudio
 
@@ -77,41 +76,15 @@ ApplicationWindow {
                     Layout.topMargin: 8
                     Layout.leftMargin: 6
                     Layout.bottomMargin: 22
-                    // The logo (ui/icons/voicestudio.png, made from logo.png by scripts/make-icons.ps1) with rounded corners.
-                    Item {
-                        implicitWidth: 42
-                        implicitHeight: 42
-                        Image {
-                            id: logo
-                            anchors.fill: parent
-                            source: "qrc:/icons/voicestudio.png"
-                            sourceSize: Qt.size(256, 256) // decoded well above display size: sharp on high-DPI screens
-                            fillMode: Image.PreserveAspectCrop
-                            smooth: true
-                            mipmap: true
-                            visible: false
-                        }
-                        Rectangle {
-                            id: logoMask
-                            anchors.fill: parent
-                            radius: 12
-                            visible: false
-                            layer.enabled: true
-                        }
-                        MultiEffect {
-                            anchors.fill: parent
-                            source: logo
-                            maskEnabled: true
-                            maskSource: logoMask
-                            maskThresholdMin: 0.5
-                            maskSpreadAtMin: 1.0
-                        }
-                        Rectangle { // hairline so the dark logo stands off the dark sidebar
-                            anchors.fill: parent
-                            radius: 12
-                            color: "transparent"
-                            border.color: Qt.rgba(1, 1, 1, 0.12)
-                        }
+                    // The logo (ui/icons/voicestudio.png, drawn by scripts/draw-logo.ps1; its rounded corners are transparent).
+                    Image {
+                        Layout.preferredWidth: 42
+                        Layout.preferredHeight: 42
+                        source: "qrc:/icons/voicestudio.png"
+                        sourceSize: Qt.size(256, 256) // decoded well above display size: sharp on high-DPI screens
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
                     }
                     ColumnLayout {
                         spacing: 0

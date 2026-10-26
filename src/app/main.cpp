@@ -15,6 +15,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <dwmapi.h>
 
 #include <cstring>
 
@@ -22,6 +23,20 @@ namespace {
 constexpr const wchar_t* kInstanceMutex = L"Local\\VoiceStudio.SingleInstance";
 constexpr const wchar_t* kActivateEvent = L"Local\\VoiceStudio.Activate"; // "show your window" from a second launch
 constexpr const wchar_t* kQuitEvent = L"Local\\VoiceStudio.Quit";         // "quit" from VoiceStudio.exe --quit (setup)
+
+// Title bar in the sidebar colour with light text and caption buttons, instead of the default white bar (Windows 11;
+// Windows 10 applies only the dark mode and ignores the colour attributes). Colours from ui/themes/Theme.qml.
+void styleTitleBar(QQuickWindow& window) {
+    const auto hwnd = reinterpret_cast<HWND>(window.winId());
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    const COLORREF caption = RGB(0x0A, 0x0C, 0x11); // Theme.sidebar
+    const COLORREF text = RGB(0xEC, 0xEE, 0xF4);    // Theme.text
+    const COLORREF border = RGB(0x23, 0x28, 0x36);  // Theme.border
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
+    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
+    DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
+}
 
 // VoiceStudio.exe --quit: asks the running VoiceStudio to quit (settings are saved as on "Quit" in the tray menu)
 // and waits up to 15 s for it to end. Used by setup and uninstall, which cannot replace or delete files in use.
@@ -98,6 +113,7 @@ int main(int argc, char* argv[]) {
         if (window == nullptr) {
             exitCode = -1;
         } else {
+            styleTitleBar(*window);
             vs::TrayIcon tray(controller, *window);
             controller.setTrayAvailable(tray.available());
             // With a tray icon, closing the window only hides it; "Quit" in the tray menu ends the app.
