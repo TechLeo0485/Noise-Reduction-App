@@ -32,6 +32,8 @@ public:
     void updateParameters(const EngineParameters& params) noexcept override;
     void process(float* samples, std::size_t count) noexcept override;
     [[nodiscard]] int latencySamples() const noexcept override;
+    // Latency while active (latencySamples() is 0 while bypassed); for delay budgets.
+    [[nodiscard]] int activeLatencySamples() const noexcept { return latency_; }
 
     void configure(bool enabled, float semitones, float bodySemitones = 0.0f, float presenceDb = 0.0f) noexcept;
 

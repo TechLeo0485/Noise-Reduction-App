@@ -2,69 +2,68 @@ import QtQuick
 import QtQuick.Layouts
 import VoiceStudio
 
+// A segmented level meter (-60..0 dBFS) with a plain-language reading ("Good", "Too loud") and the level.
 ColumnLayout {
     id: root
 
     property string label
     property real levelDb: -120
+    property bool showWord: true
     readonly property real fraction: Theme.dbToFraction(levelDb)
+    readonly property int segments: 32
 
     Layout.fillWidth: true
-    spacing: 6
+    spacing: 7
 
     RowLayout {
         Layout.fillWidth: true
+        spacing: 8
         Text {
             text: root.label
-            color: Theme.textSecondary
-            font.pixelSize: 12
+            color: Theme.text
+            font.pixelSize: Theme.fontBody
             Layout.fillWidth: true
+            elide: Text.ElideRight
         }
         Text {
-            text: root.levelDb <= -119 ? "-inf dBFS" : root.levelDb.toFixed(1) + " dBFS"
-            color: root.levelDb > -1 ? Theme.danger : Theme.text
-            font.pixelSize: 12
-            font.family: "Consolas"
+            visible: root.showWord
+            text: Theme.levelWord(root.levelDb)
+            color: Theme.levelColor(root.levelDb)
+            font.pixelSize: Theme.fontSmall
+            font.weight: Font.DemiBold
+        }
+        Text {
+            text: root.levelDb <= -119 ? "−∞ dB" : Math.round(root.levelDb) + " dB"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontCaption
+            font.family: Theme.monoFamily
+            horizontalAlignment: Text.AlignRight
+            Layout.preferredWidth: 46
         }
     }
 
-    Rectangle {
-        id: track
+    Row {
+        id: bar
         Layout.fillWidth: true
-        implicitHeight: 10
-        radius: 5
-        color: Theme.surfaceRaised
+        Layout.preferredHeight: 10
+        spacing: 3
+        readonly property real segmentWidth: (width - (root.segments - 1) * spacing) / root.segments
 
-        Item {
-            width: track.width * root.fraction
-            height: parent.height
-            clip: true
-            Behavior on width { NumberAnimation { duration: 50 } }
-
-            Rectangle {
-                width: track.width
-                height: track.height
-                radius: 5
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: Theme.accent }
-                    GradientStop { position: 0.75; color: Theme.accent }   // -15 dBFS
-                    GradientStop { position: 0.9; color: Theme.warning }   // -6 dBFS
-                    GradientStop { position: 1.0; color: Theme.danger }
-                }
-            }
-        }
-
-        // Tick marks at -40, -20, -6 dBFS
         Repeater {
-            model: [-40, -20, -6]
+            model: root.segments
             Rectangle {
-                required property var modelData
-                x: track.width * Theme.dbToFraction(modelData)
-                width: 1
-                height: track.height
-                color: Theme.background
-                opacity: 0.6
+                required property int index
+                readonly property real position: (index + 0.5) / root.segments
+                readonly property bool lit: position <= root.fraction
+                width: bar.segmentWidth
+                height: bar.height
+                radius: 2
+                // Green up to -12 dBFS, amber to -3 dBFS, red above.
+                color: !lit ? Theme.surfaceHover
+                       : position > 0.95 ? Theme.danger
+                       : position > 0.8 ? Theme.warning
+                       : Theme.success
+                opacity: lit ? 1.0 : 0.9
             }
         }
     }

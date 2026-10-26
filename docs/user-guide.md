@@ -34,18 +34,21 @@ The checklist disappears once everything is green.
 
 | Page | What it is for |
 |---|---|
-| **Home** | Is everything working, microphone volume, hear yourself, and the three everyday choices: how you **sound like**, **background noise** level, **only my voice** |
-| **Voice** | Fine-tune how you sound: depth, body, presence and tone |
-| **Clean-up** | *Only send my voice* and recording your voice, background noise details, ready-made settings per situation |
-| **Setup** | Microphone, virtual microphone, headphones, general settings, help; *Advanced* holds speed, buffers, measurements and logging |
+| **Home** | Is everything working, live levels and delay, and the everyday choices: how you **sound like**, **background noise**, **only my voice**, **steady voice at any distance** and hearing yourself |
+| **Voice** | Shape how you sound: voice look, depth, body, presence, tone, the voice stabilizer and evening out |
+| **Clean-up** | Background noise level and engine, ready-made settings per situation, *Only send my voice* and recording your voice |
+| **Setup** | Microphone, virtual microphone, headphones, general settings, **Delay**, help; *Advanced* holds processor, speed, buffers, measurements and logging |
 
-The sidebar holds the **On/Off** button for VoiceStudio, **Mute microphone** and **Help and user guide**.
-Expert settings sit under **Fine-tune** on the page they belong to. Click it to open.
+The sidebar holds the **On/Off** switch for VoiceStudio, **Mute microphone** and **Help and guide**. The top right
+shows whether VoiceStudio is **Live** and the current **Delay** (click it to open Setup).
+Expert settings sit in the **Advanced** card at the bottom of the page they belong to. Click a section to open it.
 
 ### Choosing your microphone (Setup page)
 
 * **1. Your microphone**: click the microphone you speak into. A green bar under it shows **"Hearing you"** when you talk.
-  *Windows default microphone* follows whatever Windows uses.
+  *Windows default microphone* follows whatever Windows uses. If the Windows default is a virtual microphone
+  (for example after you made *VoiceStudio Virtual Microphone* the default for your call apps), VoiceStudio uses
+  your real microphone instead, so it never listens to its own output.
 * **2. Send your voice to apps**: should say **✓ Sending your voice to "CABLE Input"** (or your own virtual microphone). If not, click **Use virtual microphone**.
 * **3. Headphones** (optional): where you hear yourself. Turn on **Listen live** on Home. Use headphones, not speakers, or you get an echo.
 
@@ -116,6 +119,9 @@ The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** 
 ### Good to know
 
 * Your voice reaches the other side about **0.08 seconds later** while isolation is on. That's not noticeable in conversation.
+  The whole delay - microphone to call app - always stays **under 0.3 seconds**; Setup → **Delay** shows it.
+* Isolation runs where it is fastest. A graphics card is not always faster: if the one you choose is slower than
+  your CPU, VoiceStudio uses the CPU and says so.
 * **Safety first:** while isolation is on, VoiceStudio never sends your raw microphone. If isolation cannot run (for example right after starting, or without a recorded voice), your microphone is **silenced** and a yellow warning explains why.
 * If you switch to a **different microphone**, VoiceStudio reminds you to record your voice again.
 * **Add more** or **Start over** any time. **Delete** removes the recording from your computer.
@@ -134,7 +140,11 @@ The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** 
   Voice character adds about 35 ms of delay while it is on, and none when it is set to Natural.
 * **Background noise** (Home): *Off*, *Light*, *Balanced* or *Strong*. *Balanced* suits most rooms. Details are on Clean-up.
 * **Situation** (Clean-up): ready-made noise and tone settings such as **Interview**, **Natural Voice**, **Gaming** and **Streaming**. Your voice character is kept when you switch.
-* **Microphone volume** (Home): aim for the meter to reach the middle when you speak normally.
+* **Steady voice at any distance** (Home or Voice): on by default. Leaning in makes a voice louder and boomier,
+  sitting back makes it quieter and thinner - and the voice character would then sound different each time.
+  The stabilizer evens out your level and that low end before the voice effects, so you sound the same at any distance.
+  The two boxes under the switch show what it is correcting right now.
+* **Microphone volume** (Home): aim for the microphone meter to read **Good** when you speak normally.
 * **Mute**: **Mute microphone** in the sidebar, or right-click the tray icon → **Mute microphone**.
 
 ### Check how you sound

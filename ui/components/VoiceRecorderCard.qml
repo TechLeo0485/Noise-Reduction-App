@@ -57,7 +57,7 @@ Card {
     subtitle: recording ? "Follow the guide. Press Done whenever you like."
               : enrolled ? "Saved on this computer - " + clock(savedSeconds) + " recorded"
               : "Record once so VoiceStudio knows it is you"
-    icon: ""
+    icon: "\uE720"
 
     // ---- Idle: what is saved, and what to do next ----------------------------------------------
     ColumnLayout {
@@ -267,7 +267,7 @@ Card {
                         id: stepLabel
                         anchors.centerIn: parent
                         text: (parent.done && !parent.current ? "✓ " : "") + modelData.title
-                        color: parent.current ? Theme.background : (parent.done ? Theme.accent : Theme.textSecondary)
+                        color: parent.current ? Theme.textOnAccent : (parent.done ? Theme.accent : Theme.textSecondary)
                         font.pixelSize: 11
                         font.weight: parent.current ? Font.DemiBold : Font.Normal
                     }

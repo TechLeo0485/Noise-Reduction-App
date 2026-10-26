@@ -9,6 +9,7 @@ Rectangle {
     property string title
     property string description
     property string badge
+    property string icon
     property bool selected: false
     property bool available: true
     signal clicked()
@@ -20,26 +21,38 @@ Rectangle {
     border.color: selected ? Theme.accent : Theme.border
     border.width: selected ? 2 : 1
     opacity: available ? 1.0 : 0.5
+    Behavior on color { ColorAnimation { duration: 90 } }
 
     ColumnLayout {
         id: content
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
         anchors.margins: 14
-        spacing: 4
+        spacing: 5
 
         RowLayout {
             Layout.fillWidth: true
+            spacing: 8
+            Text {
+                visible: root.icon !== ""
+                text: root.icon
+                font.family: Theme.iconFont
+                font.pixelSize: 14
+                color: root.selected ? Theme.accent : Theme.textSecondary
+            }
             Text {
                 text: root.title
                 color: Theme.text
-                font.pixelSize: 14
+                font.pixelSize: Theme.fontBody + 1
                 font.weight: Font.DemiBold
                 Layout.fillWidth: true
+                wrapMode: Text.Wrap
             }
             Rectangle {
                 visible: root.badge !== ""
-                radius: 4
-                color: root.available ? Theme.accent : Theme.surfaceHover
+                radius: 5
+                color: root.available ? Theme.mutedFor(Theme.success) : Theme.surfaceHover
                 implicitWidth: badgeText.implicitWidth + 12
                 implicitHeight: badgeText.implicitHeight + 4
                 Text {
@@ -48,14 +61,30 @@ Rectangle {
                     text: root.badge
                     font.pixelSize: 10
                     font.weight: Font.DemiBold
-                    color: root.available ? Theme.background : Theme.textSecondary
+                    font.letterSpacing: 0.4
+                    color: root.available ? Theme.success : Theme.textSecondary
+                }
+            }
+            Rectangle {
+                visible: root.selected
+                implicitWidth: 18
+                implicitHeight: 18
+                radius: 9
+                color: Theme.accent
+                Text {
+                    anchors.centerIn: parent
+                    text: "\uE73E"
+                    font.family: Theme.iconFont
+                    font.pixelSize: 10
+                    color: Theme.textOnAccent
                 }
             }
         }
         Text {
+            visible: root.description !== ""
             text: root.description
             color: Theme.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: Theme.fontSmall
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }

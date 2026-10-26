@@ -14,6 +14,7 @@ VsSlider {
     from: spec ? spec.min : 0
     to: spec ? spec.max : 1
     stepSize: spec ? spec.step : 0.1
+    defaultValue: spec ? spec.default : from
     decimals: stepSize < 1 ? 1 : 0
     value: backend.params[paramKey] !== undefined ? backend.params[paramKey] : 0
     onMoved: (v) => backend.setParam(paramKey, v)

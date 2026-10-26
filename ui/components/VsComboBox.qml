@@ -61,7 +61,7 @@ ComboBox {
     indicator: Text {
         x: control.width - width - 12
         y: (control.height - height) / 2
-        text: ""
+        text: "\uE70D"
         font.family: Theme.iconFont
         font.pixelSize: 10
         color: Theme.textSecondary

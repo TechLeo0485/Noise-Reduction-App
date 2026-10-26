@@ -58,6 +58,9 @@ enum class ParamId : std::uint16_t {
     // Strict voice isolation (VoxLock): only the enrolled voice passes; silence otherwise.
     IsolationEnabled,
 
+    // Voice stabilizer: same level and tone whether the speaker is close to the microphone or further away.
+    StabilizerEnabled,
+
     Count
 };
 

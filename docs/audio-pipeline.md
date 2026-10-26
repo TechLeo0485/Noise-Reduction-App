@@ -17,6 +17,9 @@ Physical microphone
             → SPSC ring → frame (isolated voice or silence; see below)
         noise suppression: Off | DSP-only | RNNoise    (one-frame crossfade on change)
         noise gate / downward expander, held open by RNNoise VAD
+        voice stabilizer (distance): slow speech leveler to −24 dBFS RMS (−10..+12 dB) and a 200 Hz low shelf
+            (−8..+4 dB) that undoes changes in the low/mid balance against the speaker's own ~2 min average
+            (proximity effect when leaning in, thin voice further away); adapts only during speech, zero latency
         EQ → compressor → voice character   (user-configurable order; voice character =
             formant-preserving pitch (Signalsmith Stretch, 35 ms blocks) → 90 Hz high-pass → anti-boom
             low shelf at 150 Hz (−1 dB per semitone lower, −0.5 dB per semitone of body, max −7 dB) → presence peak)
@@ -56,7 +59,15 @@ call, weighted overlap-add with the squared Hann window and the -0.5 output gain
 - **Latency.** Fixed delay = VoxLock's 24 ms look-ahead + chunking + 2 ms of resampling + one frame
   of hand-over + a 20 ms safety cushion: about 80 ms on an i7-12700KF. The start-up cushion assumes
   the worst frame/hop phase; slack above the cushion is trimmed in 5 ms steps during silence
-  (2 s observation windows). A late chunk costs one 10 ms frame of silence and grows the cushion.
+  (1 s observation windows). A late chunk costs one 10 ms frame of silence and grows the cushion by
+  5 ms; after 20 s without a late chunk the cushion shrinks by 5 ms again (down to 20 ms), so one bad
+  moment does not cost delay for the rest of the call.
+- **Delay limit.** The isolated voice is never further behind than the engine's limit for it (what
+  the 300 ms budget leaves, see below; 50..250 ms). Backlog above it is dropped at once (with a fade),
+  and the cushion never grows past it.
+- **Processor.** When a graphics card is chosen, the CPU is measured too; if the CPU keeps up where
+  the card does not, or needs smaller chunks (less delay), the CPU is used. Older GPUs (e.g. a GTX 1050 Ti:
+  ~16 ms per 16 ms chunk vs ~8 ms on the CPU) are often slower for this small model.
 - **Scheduling.** The worker, ONNX Runtime's pool thread and the loader opt out of power
   throttling and, on hybrid CPUs, run on the performance cores only (`preferPerformanceCores()`),
   because VoiceStudio usually runs in the background during a call.
@@ -77,6 +88,16 @@ Inside the capture and render threads:
   sees atomics and rings.
 - MMCSS "Pro Audio" registration and FTZ/DAZ are set per thread (RAII).
 
+## Delay budget: 300 ms from microphone to app
+
+`kMaxTotalLatencyMs` (EngineConfig.h) caps the whole path, including the virtual microphone. When the
+streams start, the engine adds up the worst case of every fixed part — capture period, 10 ms framing,
+resamplers, noise suppressor, voice character (35 ms), jitter target plus its 60 ms reset limit, the
+render buffer and 25 ms for the virtual microphone — and gives strict isolation what is left
+(`VoiceIsolator::setMaxLatencyMs`). Settings that would break the budget are clamped: jitter target and
+backlog limit ≤ 60 ms, Safe-mode buffer ≤ 100 ms. VoiceStudio's driver skips back to 20 ms whenever its
+reader falls more than 50 ms behind. Setup → Delay shows the measured total and its parts.
+
 ## Buffering and the overflow/underflow policy
 
 | Buffer | Size | Policy |
@@ -85,7 +106,7 @@ Inside the capture and render threads:
 | 10 ms frame accumulator | 480 samples | always drained when full |
 | Output / monitor ring | 16384 samples (~340 ms) | producer never blocks; if full, the frame is dropped and an overrun counted (should not happen because of the backlog limit) |
 | Jitter target | `max(user target, 10 ms frame + render period + 2 ms)` | PI controller steers mean fill to the target. A full frame is needed because, with drifting clocks, a render pass periodically sees no new frame |
-| Backlog limit | target + 40 ms | excess discarded immediately; counted as a latency reset |
+| Backlog limit | target + 40 ms (at most 60 ms) | excess discarded immediately; counted as a latency reset |
 | Render device queue | ≤ 2 device periods (whole buffer in Safe mode) | keeps render latency bounded |
 
 **Underflow:** the render side fades out what it has, pads with silence, counts an underrun,

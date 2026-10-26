@@ -70,6 +70,8 @@ class EngineController : public QObject {
     Q_PROPERTY(double voiceProbability READ voiceProbability NOTIFY metersChanged)
     Q_PROPERTY(double gateReductionDb READ gateReductionDb NOTIFY metersChanged)
     Q_PROPERTY(double compressorReductionDb READ compressorReductionDb NOTIFY metersChanged)
+    Q_PROPERTY(double stabilizerGainDb READ stabilizerGainDb NOTIFY metersChanged)
+    Q_PROPERTY(double stabilizerToneDb READ stabilizerToneDb NOTIFY metersChanged)
     Q_PROPERTY(QString activeSuppressor READ activeSuppressor NOTIFY metersChanged)
 
     // Engine status, statistics, hardware
@@ -148,6 +150,8 @@ public:
     [[nodiscard]] double voiceProbability() const { return voiceProbability_; }
     [[nodiscard]] double gateReductionDb() const { return gateReductionDb_; }
     [[nodiscard]] double compressorReductionDb() const { return compressorReductionDb_; }
+    [[nodiscard]] double stabilizerGainDb() const { return stabilizerGainDb_; }
+    [[nodiscard]] double stabilizerToneDb() const { return stabilizerToneDb_; }
     [[nodiscard]] QString activeSuppressor() const { return activeSuppressor_; }
 
     // Status
@@ -249,6 +253,8 @@ private:
     void refreshSetup();
     [[nodiscard]] const AudioDeviceInfo* findDevice(const std::vector<AudioDeviceInfo>& list, const std::wstring& id) const;
     [[nodiscard]] const AudioDeviceInfo* suggestedMicrophone() const;
+    // settings_.engine as the engine should run it (never a virtual device as "default microphone").
+    [[nodiscard]] EngineConfig effectiveEngineConfig() const;
     [[nodiscard]] const AudioDeviceInfo* suggestedOutput() const;
     // "VoiceStudio Mic Feed", the playback side of the VoiceStudio Virtual Microphone driver, if installed.
     [[nodiscard]] const AudioDeviceInfo* voiceStudioFeed() const;
@@ -307,6 +313,8 @@ private:
     double voiceProbability_ = -1.0;
     double gateReductionDb_ = 0.0;
     double compressorReductionDb_ = 0.0;
+    double stabilizerGainDb_ = 0.0;
+    double stabilizerToneDb_ = 0.0;
     QString activeSuppressor_;
 
     QTimer meterTimer_;

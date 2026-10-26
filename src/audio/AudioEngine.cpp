@@ -99,7 +99,7 @@ bool AudioEngine::openRender(IMMDeviceEnumerator* enumerator, const std::wstring
     rc.deviceRate = static_cast<double>(si.format.sampleRate);
     rc.maxDeviceFrames = si.bufferFrames;
     rc.targetMs = effectiveTargetMs;
-    rc.maxExtraMs = config.maxExtraMs;
+    rc.maxExtraMs = std::min(config.maxExtraMs, 60.0); // part of the 300 ms delay budget
     adapter.reader.configure(rc);
     ring.resetUnsafe();
     metrics.reset();
@@ -175,6 +175,22 @@ AudioEngine::StartResult AudioEngine::start(const EngineConfig& config, IMMDevic
             monitorActive_ = true;
             info_.monitor = monitor_.info();
         }
+    }
+
+    // ---- Delay budget: microphone to app stays under kMaxTotalLatencyMs ----------------------
+    // Worst case of every fixed part (capture period, 10 ms framing, resamplers, suppressor, voice character, jitter
+    // buffer up to its reset limit, render buffer, virtual microphone); strict isolation gets what is left.
+    {
+        constexpr double kChainRate = VoiceProcessingChain::kSampleRate;
+        double fixedMs = info_.capture.periodMs + kFrameMs + info_.captureResamplerMs +
+                         chain_.maxLatencyWithoutIsolationSamples() * 1000.0 / kChainRate + kVirtualMicLatencyMs;
+        if (outputActive_) {
+            fixedMs += info_.outputTargetMs + std::min(config.maxExtraMs, 60.0) + info_.outputResamplerMs +
+                       info_.output.bufferMs;
+        }
+        info_.fixedLatencyMs = fixedMs;
+        chain_.isolator().setMaxLatencyMs(kMaxTotalLatencyMs - fixedMs);
+        info_.isolationMaxMs = chain_.isolator().maxLatencyMs();
     }
 
     // ---- Start: renders first (they output silence while priming), then capture -----------
@@ -311,6 +327,8 @@ void AudioEngine::processFrame() noexcept {
     metrics_.gateGainDb.store(diag.gateGainDb, std::memory_order_relaxed);
     metrics_.compressorGainDb.store(diag.compressorGainDb, std::memory_order_relaxed);
     metrics_.limiterGainDb.store(diag.limiterGainDb, std::memory_order_relaxed);
+    metrics_.stabilizerGainDb.store(diag.stabilizerGainDb, std::memory_order_relaxed);
+    metrics_.stabilizerToneDb.store(diag.stabilizerToneDb, std::memory_order_relaxed);
     metrics_.activeSuppressor.store(static_cast<int>(diag.activeSuppressor), std::memory_order_relaxed);
     metrics_.requestedModeUnavailable.store(diag.requestedModeUnavailable, std::memory_order_relaxed);
     metrics_.algorithmicLatencySamples.store(diag.algorithmicLatencySamples, std::memory_order_relaxed);

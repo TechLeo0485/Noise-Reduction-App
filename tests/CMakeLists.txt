@@ -12,6 +12,7 @@ add_executable(vs_unit_tests
     unit/test_adaptive_reader.cpp
     unit/test_parameters.cpp
     unit/test_pitch_shifter.cpp
+    unit/test_voice_stabilizer.cpp
     unit/test_hardware.cpp
     unit/test_presets.cpp
     unit/test_stats.cpp

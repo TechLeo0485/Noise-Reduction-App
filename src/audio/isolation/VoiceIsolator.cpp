@@ -29,10 +29,13 @@ constexpr std::size_t kInitialMargin = 960;    // 20 ms safety fill: covers infe
 constexpr std::size_t kMarginStep = 240;       // added after every underrun ...
 constexpr std::size_t kMaxMargin = 2880;       // ... up to 60 ms
 constexpr std::size_t kDryFadeSamples = 96;    // 2 ms ramp-down of the microphone when isolation turns on
-constexpr int kTrimWindowFrames = 200;         // 2 s of fill observations per latency-trim decision
+constexpr int kTrimWindowFrames = 100;         // 1 s of fill observations per latency-trim decision
 constexpr std::size_t kMinTrim = 96;           // ignore slack below 2 ms
 constexpr std::size_t kMaxTrim = kFrameSizeConst / 2; // at most 5 ms per step, so a clipped onset is inaudible
 constexpr float kQuietPeak = 0.003f;           // about -50 dBFS: a trim here is inaudible
+constexpr int kMarginRelaxFrames = 2000;       // 20 s without a late chunk: give back one cushion step
+constexpr int kMinMaxLatency = 2400;           // the delay limit is never set below 50 ms ...
+constexpr int kMaxMaxLatency = 12000;          // ... or above 250 ms
 constexpr int kThreads = 2;                    // intra-op threads per inference (measured: 4 is no faster)
 constexpr double kHopMs = 1000.0 * voxlock::kHop / voxlock::kSampleRate;
 constexpr int kMaxFramesPerRun = 5;            // 40 ms chunks: the largest step the monitor escalates to
@@ -500,6 +503,15 @@ int pickProcessor(const std::vector<ProcessorTrial>& trials) {
     return best;
 }
 
+void VoiceIsolator::setMaxLatencyMs(double ms) noexcept {
+    const auto samples = static_cast<int>(std::lround(ms * kSampleRate / 1000.0));
+    maxLatencySamples_.store(std::clamp(samples, kMinMaxLatency, kMaxMaxLatency), std::memory_order_relaxed);
+}
+
+double VoiceIsolator::maxLatencyMs() const noexcept {
+    return maxLatencySamples_.load(std::memory_order_relaxed) * 1000.0 / kSampleRate;
+}
+
 void VoiceIsolator::setProcessors(std::vector<IsolationProcessor> available, std::string preferred) {
     {
         std::lock_guard lock(processorsMutex_);
@@ -545,7 +557,9 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
     }
     const bool cpuListed = std::any_of(candidates.begin(), candidates.end(), [](const auto& p) { return p.dmlDevice < 0; });
     if (!cpuListed) {
-        candidates.push_back({"cpu", "CPU", -1}); // fallback if the chosen GPU cannot run the model
+        // Measured too: the fallback if the chosen GPU cannot run the model, and the comparison that keeps a slow
+        // GPU from adding delay.
+        candidates.push_back({"cpu", "CPU", -1});
     }
 
     // For each processor: the smallest chunk K that keeps a safe margin. Each extra hop adds 8 ms of latency.
@@ -555,10 +569,6 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
     std::normal_distribution<float> noise(0.0f, 0.05f);
     for (std::size_t c = 0; c < candidates.size(); ++c) {
         const IsolationProcessor& processor = candidates[c];
-        const bool fallbackOnly = !cpuListed && processor.dmlDevice < 0;
-        if (fallbackOnly && pickProcessor(trials) >= 0) {
-            break; // the chosen GPU works: no need to measure the CPU fallback
-        }
         ProcessorTrial trial;
         trial.id = processor.id;
         trial.name = processor.name;
@@ -622,7 +632,26 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
         models.push_back(std::move(best));
     }
 
-    const int chosen = pickProcessor(trials);
+    int chosen = pickProcessor(trials);
+    bool cpuFaster = false;
+    if (preferred != "auto" && chosen >= 0) {
+        // The chosen processor stays unless the CPU gives clearly less delay: it keeps up where the chosen one
+        // does not, or it needs smaller chunks. (Older GPUs are often slower than the CPU for this model.)
+        for (std::size_t i = 0; i < trials.size(); ++i) {
+            const ProcessorTrial& mine = trials[i];
+            if (mine.id != preferred || !mine.error.empty() || mine.framesPerRun <= 0) {
+                continue;
+            }
+            const ProcessorTrial& best = trials[static_cast<std::size_t>(chosen)];
+            const bool clearlyWorse = (best.realTime && !mine.realTime) ||
+                                      (best.realTime == mine.realTime && best.framesPerRun < mine.framesPerRun);
+            if (clearlyWorse) {
+                cpuFaster = true;
+            } else {
+                chosen = static_cast<int>(i);
+            }
+        }
+    }
     if (chosen < 0) {
         error = trials.empty() ? "no processor available" : trials.front().error;
         return false;
@@ -645,7 +674,9 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
         status_.trials = trials;
     }
     std::string where = processor.dmlDevice >= 0 ? " on " + processor.name : std::string();
-    if (preferred != "auto" && preferred != processor.id) {
+    if (cpuFaster) {
+        where = " on the CPU: it is faster than the chosen graphics card on this computer, so there is less delay";
+    } else if (preferred != "auto" && preferred != processor.id) {
         where += " (the chosen processor could not run it)";
     }
     if (!t.realTime) {
@@ -943,6 +974,7 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
         minFill_ = SIZE_MAX;
         fillWindowFrames_ = 0;
         pendingTrim_ = 0;
+        framesSinceUnderrun_ = 0;
         if (marginSamples_ == 0) {
             marginSamples_ = kInitialMargin;
         }
@@ -966,6 +998,20 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
             if (!priming_) {
                 if (available >= n) {
                     std::size_t fill = available;
+                    // Hard limit: the isolated voice never falls further behind than the delay budget allows.
+                    // Normally the slow trim below keeps it well under; this catches bursts after a stall.
+                    const long long excess = pushed_ - popped_ - maxLatencySamples_.load(std::memory_order_relaxed);
+                    if (excess > 0 && fill > n) {
+                        const std::size_t drop = std::min(fill - n, static_cast<std::size_t>(excess));
+                        outRing_.skip(drop);
+                        popped_ += static_cast<long long>(drop);
+                        fill -= drop;
+                        pendingTrim_ = 0;
+                        fadeIn_ = 0;
+                        minFill_ = SIZE_MAX;
+                        fillWindowFrames_ = 0;
+                        metrics_.latencyCaps.fetch_add(1, std::memory_order_relaxed);
+                    }
                     if (pendingTrim_ > 0 && quietFrames_ >= 2 && fill >= n + pendingTrim_) {
                         // Drop surplus delay while the voice is silent; the next frame fades in.
                         outRing_.pop(trimScratch_.data(), pendingTrim_);
@@ -987,6 +1033,11 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
                     outRing_.pop(scratch_.data(), n);
                     popped_ += static_cast<long long>(n);
                     delivered = true;
+                    if (++framesSinceUnderrun_ >= kMarginRelaxFrames && marginSamples_ > kInitialMargin) {
+                        // Calm for a while: give back one step of the cushion; the trim then removes the slack.
+                        marginSamples_ -= std::min(kMarginStep, marginSamples_ - kInitialMargin);
+                        framesSinceUnderrun_ = 0;
+                    }
                 } else {
                     // The worker is late. This frame is silence (not the microphone) and the isolated voice
                     // continues one frame later; keep a larger cushion from now on.
@@ -994,7 +1045,12 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
                     pendingTrim_ = 0;
                     minFill_ = SIZE_MAX;
                     fillWindowFrames_ = 0;
-                    marginSamples_ = std::min(marginSamples_ + kMarginStep, kMaxMargin);
+                    framesSinceUnderrun_ = 0;
+                    // Never grow the cushion beyond what the delay limit leaves after the chunk itself.
+                    const auto limit = static_cast<std::size_t>(maxLatencySamples_.load(std::memory_order_relaxed));
+                    const std::size_t used = n + burstSamples48k(k);
+                    const std::size_t room = limit > used + kInitialMargin ? limit - used : kInitialMargin;
+                    marginSamples_ = std::min({marginSamples_ + kMarginStep, kMaxMargin, room});
                 }
             }
         }

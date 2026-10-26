@@ -36,6 +36,8 @@ struct EngineRuntimeInfo {
     double outputResamplerMs = 0.0;
     double outputTargetMs = 0.0;  // effective jitter-buffer target
     double monitorTargetMs = 0.0;
+    double fixedLatencyMs = 0.0;    // worst case of everything except strict isolation, incl. the virtual mic
+    double isolationMaxMs = 0.0;    // what the 300 ms budget leaves for strict isolation
 };
 
 // Owns the real-time pipeline:

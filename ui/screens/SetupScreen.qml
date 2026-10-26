@@ -49,34 +49,24 @@ ScreenPage {
     }
     function count(v) { return v !== undefined ? String(v) : "n/a" }
 
-    RowLayout {
-        Layout.fillWidth: true
-        Text {
-            text: "Pick your microphone, make sure your voice goes to a virtual microphone, and choose your headphones."
-            color: Theme.textSecondary
-            font.pixelSize: 12
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-        }
-        VsButton { text: "Refresh devices"; onClicked: backend.refreshDevices() }
-    }
-
-    TwoColumns {
+    CardGrid {
         wide: page.wide
 
-        leftContent: [
             Card {
+                Layout.fillHeight: true
                 title: "1. Your microphone"
                 subtitle: "Click the microphone you speak into. The bar under it should move when you talk."
-                icon: ""
+                actions: VsButton { text: "Refresh"; iconText: "\uE72C"; implicitHeight: 32; onClicked: backend.refreshDevices() }
+                icon: "\uE720"
 
                 DeviceTile {
                     title: "Windows default microphone"
                     // Common trap: after making the virtual microphone the Windows default for call apps,
                     // VoiceStudio would listen to its own output.
                     subtitle: page.defaultIsVirtual(backend.inputDevices)
-                              ? "Not recommended: your Windows default is \"" + page.defaultName(backend.inputDevices)
-                                + "\", a virtual device. Pick your real microphone below."
+                              ? "Your Windows default is \"" + page.defaultName(backend.inputDevices)
+                                + "\", a virtual device - so VoiceStudio listens to \"" + page.su.micName
+                                + "\" instead. Better: pick your real microphone below."
                               : page.defaultName(backend.inputDevices) !== ""
                                 ? "Currently: " + page.defaultName(backend.inputDevices)
                                   + ". Follows Windows when you change it there."
@@ -119,76 +109,21 @@ ScreenPage {
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
-            },
-
-            Card {
-                title: "3. Headphones (optional)"
-                subtitle: "Where you hear yourself (Listen live on Home) and voice checks. Use headphones, not speakers."
-                icon: ""
-                VsComboBox {
-                    Layout.fillWidth: true
-                    model: backend.outputDevices
-                    textRole: "label"
-                    currentId: backend.monitorDeviceId
-                    placeholder: "Windows default output"
-                    onPicked: (id) => backend.selectMonitorDevice(id)
-                }
-                ParamSlider { paramKey: "monitorGainDb" }
-                Text {
-                    visible: backend.streamInfo.monitorError !== undefined && backend.streamInfo.monitorError !== ""
-                    text: backend.streamInfo.monitorError !== undefined ? backend.streamInfo.monitorError : ""
-                    color: Theme.warning
-                    font.pixelSize: 12
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
-            },
-
-            Card {
-                title: "General"
-                icon: ""
-                VsSwitch {
-                    label: "Keep running when I close the window"
-                    description: "VoiceStudio stays in the notification area (next to the clock). Right-click its icon to quit."
-                    enabled: backend.trayAvailable
-                    checked: backend.closeToTray
-                    onToggled: (value) => backend.closeToTray = value
-                }
-                VsSwitch {
-                    label: "Start with Windows"
-                    description: "Starts in the notification area when you sign in, so your voice is ready in every call"
-                    checked: backend.startWithWindows
-                    onToggled: (value) => backend.startWithWindows = value
-                }
-                VsSwitch {
-                    label: "Reconnect automatically"
-                    description: "Restart audio by itself after unplugging a device, Bluetooth drop-outs or sleep"
-                    checked: backend.autoRecover
-                    onToggled: (value) => backend.autoRecover = value
-                }
-                Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Theme.textSecondary
-                    font.pixelSize: 11
-                    text: "Privacy: everything runs on this computer. Nothing is uploaded, there is no account or tracking. "
-                          + "Only the voice you record on the Clean-up page is saved, in its own folder."
-                }
             }
-        ]
 
-        rightContent: [
             Card {
+                Layout.fillHeight: true
                 title: "2. Send your voice to apps"
                 subtitle: "VoiceStudio plays your voice into a virtual microphone. Call apps pick it up from there."
-                icon: ""
+                icon: "\uE8F1"
 
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: statusColumn.implicitHeight + 24
                     radius: Theme.radiusSmall
-                    color: page.su.outputOk ? "#0F2A27" : "#2A2210"
-                    border.color: page.su.outputOk ? Theme.accent : Theme.warning
+                    color: page.su.outputOk ? Theme.successMuted : Theme.warningMuted
+                    border.color: page.su.outputOk ? Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.4)
+                                                   : Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.4)
                     ColumnLayout {
                         id: statusColumn
                         anchors.left: parent.left
@@ -229,8 +164,8 @@ ScreenPage {
                     Layout.fillWidth: true
                     implicitHeight: vmText.implicitHeight + 24
                     radius: Theme.radiusSmall
-                    color: "#2A2210"
-                    border.color: Theme.warning
+                    color: Theme.warningMuted
+                    border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.4)
                     Text {
                         id: vmText
                         anchors.fill: parent
@@ -342,11 +277,87 @@ ScreenPage {
                         }
                     }
                 }
-            },
+            }
 
             Card {
+                Layout.fillHeight: true
+                title: "3. Headphones (optional)"
+                subtitle: "Where you hear yourself (Listen live on Home) and voice checks. Use headphones, not speakers."
+                icon: "\uE7F6"
+                VsComboBox {
+                    Layout.fillWidth: true
+                    model: backend.outputDevices
+                    textRole: "label"
+                    currentId: backend.monitorDeviceId
+                    placeholder: "Windows default output"
+                    onPicked: (id) => backend.selectMonitorDevice(id)
+                }
+                ParamSlider { paramKey: "monitorGainDb" }
+                Text {
+                    visible: backend.streamInfo.monitorError !== undefined && backend.streamInfo.monitorError !== ""
+                    text: backend.streamInfo.monitorError !== undefined ? backend.streamInfo.monitorError : ""
+                    color: Theme.warning
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+
+            Card {
+                Layout.fillHeight: true
+                title: "General"
+                icon: "\uE713"
+                VsSwitch {
+                    label: "Keep running when I close the window"
+                    description: "VoiceStudio stays in the notification area (next to the clock). Right-click its icon to quit."
+                    enabled: backend.trayAvailable
+                    checked: backend.closeToTray
+                    onToggled: (value) => backend.closeToTray = value
+                }
+                VsSwitch {
+                    label: "Start with Windows"
+                    description: "Starts in the notification area when you sign in, so your voice is ready in every call"
+                    checked: backend.startWithWindows
+                    onToggled: (value) => backend.startWithWindows = value
+                }
+                VsSwitch {
+                    label: "Reconnect automatically"
+                    description: "Restart audio by itself after unplugging a device, Bluetooth drop-outs or sleep"
+                    checked: backend.autoRecover
+                    onToggled: (value) => backend.autoRecover = value
+                }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textSecondary
+                    font.pixelSize: 11
+                    text: "Privacy: everything runs on this computer. Nothing is uploaded, there is no account or tracking. "
+                          + "Only the voice you record on the Clean-up page is saved, in its own folder."
+                }
+            }
+
+            Card {
+                Layout.fillHeight: true
+                title: "Delay"
+                subtitle: "From your microphone to the app that records the virtual microphone"
+                icon: "\uE916"
+                LatencyMeter {}
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSmall
+                    text: "Every part is limited so the total stays under " + Theme.latencyBudgetMs + " ms. \"Only my voice\" "
+                          + "uses most of it; it runs on " + (backend.isolation.processorName !== undefined
+                          && backend.isolation.processorName !== "" ? backend.isolation.processorName : "the CPU")
+                          + (backend.selectedBackend === "auto" ? " (chosen automatically for the lowest delay)." : ".")
+                }
+            }
+
+            Card {
+                Layout.fillHeight: true
                 title: "Help and troubleshooting"
-                icon: ""
+                icon: "\uE897"
                 RowLayout {
                     spacing: 8
                     VsButton { text: "Open user guide"; primary: true; onClicked: page.openPage("help") }
@@ -368,14 +379,15 @@ ScreenPage {
                     text: "Logs and diagnostics contain settings and device names only, never audio."
                 }
             }
-        ]
+
     }
 
     // ---- Technical: everything most people never need ----------------------------------------------
     Card {
         title: "Advanced"
-        subtitle: "Speed, buffers, measurements and logging"
-        icon: ""
+        subtitle: "Processor, speed, buffers, measurements and logging"
+        iconColor: Theme.textSecondary
+        icon: "\uE9F5"
 
         // Where voice isolation runs: Automatic measures the CPU and every usable graphics card on this PC.
         Expander {
@@ -383,6 +395,7 @@ ScreenPage {
             readonly property var iso: backend.isolation
             readonly property var trials: iso.trials !== undefined ? iso.trials : []
             title: "Processor for voice isolation"
+            divider: false
             hint: iso.processorName !== undefined && iso.processorName !== ""
                   ? "Runs on " + iso.processorName + (backend.selectedBackend === "auto" ? " (automatic)" : "")
                   : (backend.selectedBackend === "auto" ? "Automatic" : "")
@@ -393,7 +406,8 @@ ScreenPage {
                 font.pixelSize: 12
                 text: "Only \"Only send my voice\" uses it; noise removal and effects always run on the CPU. A graphics "
                       + "card is not always faster for live voice - Automatic measures and picks the lowest delay. "
-                      + "A change is measured right away (about 10 seconds)."
+                      + "If you choose a graphics card that turns out slower than the CPU, the CPU is used so the delay "
+                      + "stays low. A change is measured right away (about 10 seconds)."
             }
             GridLayout {
                 Layout.fillWidth: true
@@ -520,6 +534,18 @@ ScreenPage {
             StatRow { label: "Resampling filters"; value: Theme.fmt(page.s.latencyResamplerMs, 2, "ms"); monospace: true }
             StatRow { label: "Jitter buffer (measured fill)"; value: Theme.fmt(page.s.latencyJitterBufferMs, 2, "ms"); monospace: true }
             StatRow { label: "Render queue (measured)"; value: Theme.fmt(page.s.latencyRenderQueueMs, 2, "ms"); monospace: true }
+            StatRow { label: "Virtual microphone (estimate)"; value: "25 ms"; monospace: true }
+            StatRow {
+                label: "Limit for \"Only my voice\" (what the 300 ms leave)"
+                value: Theme.fmt(page.s.isolationMaxMs, 0, "ms")
+                monospace: true
+            }
+            StatRow {
+                label: "Total incl. virtual microphone (limit 300 ms)"
+                value: Theme.fmt(page.s.latencyWithVirtualMicMs, 1, "ms")
+                valueColor: Theme.accent
+                monospace: true
+            }
             StatRow {
                 label: "Estimated total (excl. drivers / cable)"
                 value: Theme.fmt(page.s.latencyEstimatedTotalMs, 1, "ms")

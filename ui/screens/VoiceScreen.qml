@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import VoiceStudio
 
-// Fine-tuning how you sound: voice character (formant-preserving depth, body, presence) and tone (EQ,
-// volume, evening out). The ready-made looks are picked on Home. Expert dynamics sit in "Fine-tune".
+// Shaping how you sound: the ready-made looks, voice character (formant-preserving depth, body, presence),
+// tone (EQ, volume, evening out) and the voice stabilizer. Expert dynamics sit in "Advanced".
 ScreenPage {
     id: page
 
@@ -22,28 +22,39 @@ ScreenPage {
         const presence = key === "pitchPresenceDb" ? value : num("pitchPresenceDb", 0)
         backend.setParam("pitchEnabled", Math.abs(depth) >= 0.01 || Math.abs(body) >= 0.01 || presence >= 0.05)
     }
-    function signed(v, unit) {
-        return (v > 0 ? "+" : "") + v.toFixed(1) + " " + unit
-    }
-    readonly property string lookName: {
-        const list = backend.voiceLooks
-        for (let i = 0; i < list.length; ++i)
-            if (list[i].key === backend.voiceLook) return list[i].label
-        return "Custom"
+
+    Card {
+        title: "Voice look"
+        subtitle: "Start from a look, then fine-tune below. Your choice stays when you change the noise settings."
+        icon: "\uE9E9"
+        LookPicker { wide: page.wide; wideColumns: 5 }
     }
 
-    TwoColumns {
-        wide: page.wide
+    // Two balanced columns: character and stabilizer on the left, tone and evening out on the right.
+    GridLayout {
+        Layout.fillWidth: true
+        columns: page.wide ? 2 : 1
+        columnSpacing: Theme.spacing
+        rowSpacing: Theme.spacing
+        uniformCellWidths: true
 
-        leftContent: [
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignTop
+            spacing: Theme.spacing
+
             Card {
                 title: "Voice character"
                 subtitle: "Deeper, stronger, thicker - still you, not a robot"
-                icon: ""
+                icon: "\uE720"
+                actions: StatusPill {
+                    text: page.characterOn ? "On  +35 ms" : "Off"
+                    tone: page.characterOn ? Theme.accent : Theme.textSecondary
+                }
 
-                StatRow { label: "Look (choose on Home)"; value: page.lookName }
                 VsSlider {
-                    label: "Depth - lower or higher pitch"
+                    label: "Depth"
+                    hint: "Lower or higher pitch"
                     unit: "st"
                     from: -12
                     to: 12
@@ -52,7 +63,8 @@ ScreenPage {
                     onMoved: (v) => page.setCharacter("pitchSemitones", v)
                 }
                 VsSlider {
-                    label: "Body - thicker, bigger voice (left: lighter)"
+                    label: "Body"
+                    hint: "Right: thicker, bigger voice. Left: lighter"
                     unit: "st"
                     from: -6
                     to: 6
@@ -61,7 +73,8 @@ ScreenPage {
                     onMoved: (v) => page.setCharacter("pitchBodySt", v)
                 }
                 VsSlider {
-                    label: "Presence - clear and forward"
+                    label: "Presence"
+                    hint: "Clear and forward"
                     unit: "dB"
                     from: 0
                     to: 9
@@ -73,22 +86,46 @@ ScreenPage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: Theme.textSecondary
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSmall
                     text: page.characterOn
-                          ? "On: depth " + page.signed(page.num("pitchSemitones", 0), "st") + ", body "
-                            + page.signed(page.num("pitchBodySt", 0), "st") + ". Adds about 35 ms of delay. "
-                            + "For strong and thick, go 1 to 2 steps deeper and add body. Bass is held back "
-                            + "automatically, so a deeper voice does not get boomy."
+                          ? "For strong and thick, go 1 to 2 steps deeper and add body. Bass is held back automatically, "
+                            + "so a deeper voice does not get boomy. Double-click a slider to reset it."
                           : "Off: your voice is unchanged and no delay is added."
                 }
             }
-        ]
 
-        rightContent: [
+            Card {
+                title: "Steady voice at any distance"
+                subtitle: "Same level and tone whether you lean in or sit back"
+                icon: "\uE81D"
+                VsSwitch {
+                    label: "Voice stabilizer"
+                    description: "Brings your speech to a steady level and trims the extra bass you get close to the "
+                                 + "microphone (or restores it further away), before the voice effects - so the changed "
+                                 + "voice sounds the same at any distance. Adapts only while you talk; adds no delay."
+                    checked: page.p.stabilizerEnabled === true
+                    onToggled: (value) => backend.setParam("stabilizerEnabled", value)
+                }
+                StabilizerReadout { visible: page.p.stabilizerEnabled === true && backend.engineRunning }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignTop
+            spacing: Theme.spacing
+
             Card {
                 title: "Tone"
                 subtitle: "Small changes go a long way; 0 means unchanged"
-                icon: ""
+                icon: "\uE767"
+                actions: LinkText {
+                    text: "Reset"
+                    onClicked: {
+                        for (const key of ["voiceVolumeDb", "bassDb", "warmthDb", "midDb", "clarityDb", "trebleDb"])
+                            backend.setParam(key, 0)
+                    }
+                }
                 VsSlider {
                     label: "Voice volume"
                     unit: "dB"
@@ -99,7 +136,8 @@ ScreenPage {
                     onMoved: (v) => backend.setParam("voiceVolumeDb", v)
                 }
                 VsSlider {
-                    label: "Bass - low end (lower if boomy)"
+                    label: "Bass"
+                    hint: "Low end - lower if boomy"
                     unit: "dB"
                     from: -12
                     to: 12
@@ -108,7 +146,8 @@ ScreenPage {
                     onMoved: (v) => backend.setParam("bassDb", v)
                 }
                 VsSlider {
-                    label: "Warmth - richer, less thin"
+                    label: "Warmth"
+                    hint: "Richer, less thin"
                     unit: "dB"
                     from: -12
                     to: 12
@@ -117,7 +156,8 @@ ScreenPage {
                     onMoved: (v) => backend.setParam("warmthDb", v)
                 }
                 VsSlider {
-                    label: "Mid - more body (lower if nasal or boxy)"
+                    label: "Mid"
+                    hint: "More body - lower if nasal or boxy"
                     unit: "dB"
                     from: -12
                     to: 12
@@ -126,7 +166,8 @@ ScreenPage {
                     onMoved: (v) => backend.setParam("midDb", v)
                 }
                 VsSlider {
-                    label: "Clarity - easier to understand"
+                    label: "Clarity"
+                    hint: "Easier to understand"
                     unit: "dB"
                     from: -12
                     to: 12
@@ -135,7 +176,8 @@ ScreenPage {
                     onMoved: (v) => backend.setParam("clarityDb", v)
                 }
                 VsSlider {
-                    label: "Brightness - airy top end (lower if harsh)"
+                    label: "Brightness"
+                    hint: "Airy top end - lower if harsh"
                     unit: "dB"
                     from: -12
                     to: 12
@@ -143,53 +185,90 @@ ScreenPage {
                     value: page.num("trebleDb", 0)
                     onMoved: (v) => backend.setParam("trebleDb", v)
                 }
+            }
+
+            Card {
+                title: "Even out loud and quiet speech"
+                subtitle: "Keeps your volume steady so you are never too quiet or too loud"
+                icon: "\uE9D2"
                 VsSwitch {
-                    label: "Even out loud and quiet speech"
-                    description: "Keeps your volume steady so you are never too quiet or too loud"
+                    label: "Compressor"
+                    description: "Turns down loud words and lifts quiet ones."
                     checked: page.p.compressorEnabled === true
                     onToggled: (value) => backend.setParam("compressorEnabled", value)
                 }
-                VsButton {
-                    text: "Reset tone"
-                    onClicked: {
-                        for (const key of ["voiceVolumeDb", "bassDb", "warmthDb", "midDb", "clarityDb", "trebleDb"])
-                            backend.setParam(key, 0)
-                    }
-                }
-
-                Expander {
-                    title: "Fine-tune"
-                    hint: "Compressor timing, limiter and effect order"
-
-                    ParamSlider { paramKey: "compThresholdDb"; enabled: page.p.compressorEnabled === true }
-                    ParamSlider { paramKey: "compRatio"; enabled: page.p.compressorEnabled === true }
-                    ParamSlider { paramKey: "compAttackMs"; enabled: page.p.compressorEnabled === true }
-                    ParamSlider { paramKey: "compReleaseMs"; enabled: page.p.compressorEnabled === true }
-                    ParamSlider { paramKey: "compMakeupDb"; enabled: page.p.compressorEnabled === true }
-                    StatRow { label: "Compressor gain reduction now"; value: backend.compressorReductionDb.toFixed(1) + " dB"; monospace: true }
-                    ParamSwitch { paramKey: "limiterEnabled"; description: "Catches peaks before they distort. A hard clip at 0 dBFS always stays active." }
-                    ParamSlider { paramKey: "limiterCeilingDb"; enabled: page.p.limiterEnabled === true }
-
-                    Text { text: "Effect order"; color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
-                    Repeater {
-                        model: backend.effectOrder
-                        RowLayout {
-                            required property string modelData
-                            required property int index
-                            Layout.fillWidth: true
-                            spacing: 8
-                            Text {
-                                text: (index + 1) + ".  " + page.effectNames[modelData]
-                                color: Theme.text
-                                font.pixelSize: 13
-                                Layout.fillWidth: true
-                            }
-                            VsButton { text: "↑"; enabled: index > 0; onClicked: backend.moveEffect(index, -1) }
-                            VsButton { text: "↓"; enabled: index < backend.effectOrder.length - 1; onClicked: backend.moveEffect(index, 1) }
-                        }
+                RowLayout {
+                    visible: page.p.compressorEnabled === true && backend.engineRunning
+                    Layout.fillWidth: true
+                    Text { text: "Turning down now"; color: Theme.textSecondary; font.pixelSize: Theme.fontSmall; Layout.fillWidth: true }
+                    Text {
+                        text: Theme.signed(backend.compressorReductionDb, 1, "dB")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSmall
+                        font.family: Theme.monoFamily
                     }
                 }
             }
-        ]
+        }
+    }
+
+    // ---- Advanced ------------------------------------------------------------------------------------
+    Card {
+        title: "Advanced"
+        subtitle: "Compressor timing, limiter and the order of the effects"
+        icon: "\uE713"
+        iconColor: Theme.textSecondary
+
+        Expander {
+            title: "Compressor"
+            hint: "Threshold, ratio, timing and makeup gain"
+            divider: false
+            ParamSlider { paramKey: "compThresholdDb"; enabled: page.p.compressorEnabled === true }
+            ParamSlider { paramKey: "compRatio"; enabled: page.p.compressorEnabled === true }
+            ParamSlider { paramKey: "compAttackMs"; enabled: page.p.compressorEnabled === true }
+            ParamSlider { paramKey: "compReleaseMs"; enabled: page.p.compressorEnabled === true }
+            ParamSlider { paramKey: "compMakeupDb"; enabled: page.p.compressorEnabled === true }
+        }
+
+        Expander {
+            title: "Limiter"
+            hint: "Catches peaks before they distort"
+            ParamSwitch { paramKey: "limiterEnabled"; description: "A hard clip at 0 dBFS always stays active." }
+            ParamSlider { paramKey: "limiterCeilingDb"; enabled: page.p.limiterEnabled === true }
+        }
+
+        Expander {
+            title: "Effect order"
+            hint: Array.from(backend.effectOrder).map((k) => page.effectNames[k].split(" (")[0]).join("  →  ")
+            Repeater {
+                model: backend.effectOrder
+                RowLayout {
+                    required property string modelData
+                    required property int index
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Rectangle {
+                        implicitWidth: 24
+                        implicitHeight: 24
+                        radius: 12
+                        color: Theme.surfaceRaised
+                        Text {
+                            anchors.centerIn: parent
+                            text: index + 1
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSmall
+                        }
+                    }
+                    Text {
+                        text: page.effectNames[modelData]
+                        color: Theme.text
+                        font.pixelSize: Theme.fontBody
+                        Layout.fillWidth: true
+                    }
+                    VsButton { iconText: "\uE70E"; implicitWidth: 40; enabled: index > 0; onClicked: backend.moveEffect(index, -1) }
+                    VsButton { iconText: "\uE70D"; implicitWidth: 40; enabled: index < backend.effectOrder.length - 1; onClicked: backend.moveEffect(index, 1) }
+                }
+            }
+        }
     }
 }

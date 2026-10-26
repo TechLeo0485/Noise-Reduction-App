@@ -18,7 +18,8 @@ Whatever is played into the feed comes out of the microphone (`sysvad/VsLoopback
 buffer of 48 kHz mono 16-bit samples, read about 20 ms behind the writer. Both sides run on the same clock
 (the WaveRT position timers use `KeQueryPerformanceCounter`), so there is no drift. While nothing is played,
 the microphone delivers silence; after a gap it waits for 20 ms of new audio before playing again, so it
-never replays old audio.
+never replays old audio. If the reader falls more than 50 ms behind (e.g. the recording app paused), it skips
+back to 20 ms, so the virtual microphone never adds more than that to VoiceStudio's 300 ms delay budget.
 
 Formats are fixed to 48 kHz 16-bit (feed: stereo, mixed down to mono; microphone: mono). Windows' audio
 engine converts for apps that use other formats.

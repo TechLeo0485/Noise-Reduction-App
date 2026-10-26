@@ -12,9 +12,9 @@ constexpr float kDspOnly = static_cast<float>(SuppressionMode::DspOnly);
 bool isPresetScoped(ParamId id) noexcept {
     // Strict isolation is a privacy control, not a sound setting: a preset must never switch it off.
     // The voice character (depth, body, presence) is the user's own voice and has its own looks, so
-    // switching between room/noise presets keeps it.
+    // switching between room/noise presets keeps it. The voice stabilizer is a general choice, not a sound.
     return id != ParamId::InputGainDb && id != ParamId::MasterMute && id != ParamId::MonitorGainDb &&
-           id != ParamId::IsolationEnabled && !isVoiceCharacterParam(id);
+           id != ParamId::IsolationEnabled && id != ParamId::StabilizerEnabled && !isVoiceCharacterParam(id);
 }
 
 const std::vector<Preset>& builtInPresets() {

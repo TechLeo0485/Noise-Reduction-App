@@ -122,6 +122,10 @@ public:
     // Processors the model may run on (CPU first, then GPUs) and the user's choice: "auto" (measure all, use the
     // best) or one id. Re-calibrates the running voice when this changes. Without a call: CPU only.
     void setProcessors(std::vector<IsolationProcessor> available, std::string preferred);
+    // Upper limit for the delay of the isolated voice behind the microphone (the engine derives it from its overall
+    // delay budget). Above it, the backlog is dropped at once instead of being trimmed slowly. Any thread.
+    void setMaxLatencyMs(double ms) noexcept;
+    [[nodiscard]] double maxLatencyMs() const noexcept;
     // Deletes the saved voice. While isolation is enabled the output is silent until a new voice is enrolled.
     void deleteEnrollment();
     // Folder of the saved voice (sample and full recording); empty before initialize().
@@ -169,6 +173,7 @@ public:
         std::atomic<std::uint64_t> restarts{0};
         std::atomic<std::uint64_t> silencedFrames{0}; // enabled, but no isolated audio was available
         std::atomic<std::uint64_t> isolatedFrames{0};
+        std::atomic<std::uint64_t> latencyCaps{0};    // backlog above the delay limit was dropped
         std::atomic<float> latencyMs{0.0f};           // measured delay of the isolated voice (48 kHz in/out)
         std::atomic<float> lastInferenceUs{0.0f};
         std::atomic<bool> delivering{false};
@@ -274,6 +279,8 @@ private:
     std::size_t fadeIn_ = 0;     // samples of the current fade-in already applied
     bool lastFrameDry_ = false;  // the previous frame passed the microphone through (isolation off)
     int lastLatencySamples_ = 0;
+    std::atomic<int> maxLatencySamples_{7200};    // 150 ms until the engine sets its budget
+    int framesSinceUnderrun_ = 0;                 // the safety cushion shrinks again after a calm stretch
     // Latency trimming: the start-up cushion assumes the worst phase between 10 ms frames and 8 ms
     // hops; once running, slack above the safety margin is dropped during a quiet moment.
     std::size_t minFill_ = SIZE_MAX; // smallest output-ring fill seen before a read in this window

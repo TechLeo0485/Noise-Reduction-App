@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import VoiceStudio
 
-// A row of pill buttons for choosing one item (voice looks, situation presets).
+// A row of pill buttons for choosing one item (situation presets).
 // `model` items need `key` and `label`; `current` is the selected key ("" = none, e.g. custom).
 Flow {
     id: root
@@ -19,17 +19,18 @@ Flow {
         Rectangle {
             required property var modelData
             readonly property bool active: modelData.key === root.current
-            width: chipLabel.implicitWidth + 28
+            width: chipLabel.implicitWidth + 30
             height: 34
             radius: 17
-            color: active ? Theme.accent : (chipMouse.containsMouse ? Theme.surfaceHover : Theme.surfaceRaised)
+            color: active ? Theme.accentMuted : (chipMouse.containsMouse ? Theme.surfaceHover : Theme.surfaceRaised)
             border.color: active ? Theme.accent : Theme.border
+            Behavior on color { ColorAnimation { duration: 90 } }
             Text {
                 id: chipLabel
                 anchors.centerIn: parent
                 text: modelData.label
-                color: parent.active ? Theme.background : Theme.text
-                font.pixelSize: 13
+                color: parent.active ? Theme.text : Theme.textSecondary
+                font.pixelSize: Theme.fontBody
                 font.weight: parent.active ? Font.DemiBold : Font.Normal
             }
             MouseArea {

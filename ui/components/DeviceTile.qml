@@ -17,31 +17,32 @@ Rectangle {
     signal clicked()
 
     Layout.fillWidth: true
-    implicitHeight: content.implicitHeight + 24
+    implicitHeight: content.implicitHeight + 26
     radius: Theme.radiusSmall
     color: selected ? Theme.accentMuted : (mouse.containsMouse ? Theme.surfaceHover : Theme.surfaceRaised)
     border.color: selected ? (warn ? Theme.warning : Theme.accent) : Theme.border
     border.width: selected ? 2 : 1
+    Behavior on color { ColorAnimation { duration: 90 } }
 
     ColumnLayout {
         id: content
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        anchors.margins: 12
-        spacing: 6
+        anchors.margins: 14
+        spacing: 8
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 10
+            spacing: 12
 
             // Radio indicator
             Rectangle {
-                width: 18
-                height: 18
+                implicitWidth: 18
+                implicitHeight: 18
                 radius: 9
                 color: "transparent"
-                border.color: root.selected ? Theme.accent : Theme.textSecondary
+                border.color: root.selected ? Theme.accent : Theme.borderStrong
                 border.width: 2
                 Rectangle {
                     visible: root.selected
@@ -54,12 +55,12 @@ Rectangle {
             }
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 1
+                spacing: 2
                 Text {
                     Layout.fillWidth: true
                     text: root.title
                     color: Theme.text
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fontBody
                     font.weight: root.selected ? Font.DemiBold : Font.Normal
                     elide: Text.ElideRight
                 }
@@ -68,13 +69,13 @@ Rectangle {
                     Layout.fillWidth: true
                     text: root.subtitle
                     color: root.warn ? Theme.warning : Theme.textSecondary
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontCaption + 1
                     wrapMode: Text.WordWrap
                 }
             }
             Rectangle {
                 visible: root.tag !== ""
-                radius: 9
+                radius: 6
                 color: Theme.surface
                 border.color: Theme.border
                 implicitWidth: tagText.implicitWidth + 14
@@ -93,8 +94,8 @@ Rectangle {
         RowLayout {
             visible: root.showLevel
             Layout.fillWidth: true
-            Layout.leftMargin: 28
-            spacing: 8
+            Layout.leftMargin: 30
+            spacing: 10
             ProgressBarThin {
                 Layout.fillWidth: true
                 value: Theme.dbToFraction(root.levelDb)
@@ -103,7 +104,7 @@ Rectangle {
             Text {
                 text: root.levelDb > -45 ? "Hearing you" : "Speak to test"
                 color: root.levelDb > -45 ? Theme.success : Theme.textSecondary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontCaption
             }
         }
     }

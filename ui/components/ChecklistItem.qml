@@ -13,23 +13,26 @@ RowLayout {
     property string actionText
     signal actionClicked()
 
+    readonly property color statusColor: status === "ok" ? Theme.success : status === "problem" ? Theme.warning : Theme.textSecondary
+
     Layout.fillWidth: true
     spacing: 14
 
     Rectangle {
         Layout.alignment: Qt.AlignTop
-        Layout.topMargin: 2
-        width: 26
-        height: 26
+        Layout.topMargin: 1
+        implicitWidth: 26
+        implicitHeight: 26
         radius: 13
-        color: root.status === "ok" ? Theme.success : root.status === "problem" ? Theme.warning : Theme.surfaceHover
+        color: Theme.mutedFor(root.statusColor)
+        border.color: root.status === "pending" ? Theme.borderStrong : "transparent"
         Text {
             anchors.centerIn: parent
             // Segoe MDL2: CheckMark / Important / More
-            text: root.status === "ok" ? "" : root.status === "problem" ? "" : ""
+            text: root.status === "ok" ? "\uE73E" : root.status === "problem" ? "\uE7BA" : "\uE712"
             font.family: Theme.iconFont
             font.pixelSize: 12
-            color: root.status === "pending" ? Theme.textSecondary : Theme.background
+            color: root.statusColor
         }
     }
 
@@ -39,7 +42,7 @@ RowLayout {
         Text {
             text: root.title
             color: Theme.text
-            font.pixelSize: 14
+            font.pixelSize: Theme.fontBody + 1
             font.weight: Font.DemiBold
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
@@ -48,7 +51,7 @@ RowLayout {
             visible: root.detail !== ""
             text: root.detail
             color: Theme.textSecondary
-            font.pixelSize: 12
+            font.pixelSize: Theme.fontSmall
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
         }

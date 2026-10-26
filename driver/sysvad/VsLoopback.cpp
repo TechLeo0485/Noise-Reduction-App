@@ -17,7 +17,7 @@ Abstract:
 #define VS_LOOPBACK_RATE        48000
 #define VS_LOOPBACK_SAMPLES     (VS_LOOPBACK_RATE * 2)     // 2 s of mono 16-bit audio
 #define VS_LOOPBACK_TARGET      (VS_LOOPBACK_RATE / 50)    // 20 ms: covers the jitter of both position timers
-#define VS_LOOPBACK_MAX_DELAY   (VS_LOOPBACK_RATE / 10)    // above 100 ms behind, skip back to the target
+#define VS_LOOPBACK_MAX_DELAY   (VS_LOOPBACK_RATE / 20)    // above 50 ms behind, skip back to the target (300 ms budget)
 
 static KSPIN_LOCK   g_VsLoopbackLock;
 static SHORT*       g_VsLoopbackBuffer = NULL;

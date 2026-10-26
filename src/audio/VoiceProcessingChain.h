@@ -10,6 +10,7 @@
 #include "dsp/Limiter.h"
 #include "dsp/NoiseGate.h"
 #include "dsp/PitchShifter.h"
+#include "dsp/VoiceStabilizer.h"
 
 #include <array>
 #include <memory>
@@ -27,6 +28,8 @@ struct FrameDiagnostics {
     float gateGainDb = 0.0f;
     float compressorGainDb = 0.0f;
     float limiterGainDb = 0.0f;
+    float stabilizerGainDb = 0.0f; // level correction of the voice stabilizer
+    float stabilizerToneDb = 0.0f; // its 200 Hz shelf (negative: closer than usual)
     int algorithmicLatencySamples = 0;
     SuppressorKind activeSuppressor = SuppressorKind::Off;
     bool requestedModeUnavailable = false;
@@ -39,7 +42,7 @@ struct FrameDiagnostics {
 // The complete per-frame voice processing pipeline (48 kHz mono, 10 ms frames):
 //
 //   input gain -> high-pass -> strict voice isolation (optional, VoxLock on its own thread)
-//   -> noise suppressor (Off / DSP / RNNoise) -> noise gate
+//   -> noise suppressor (Off / DSP / RNNoise) -> noise gate -> voice stabilizer (distance)
 //   -> [EQ, compressor, pitch in configurable order] -> voice volume -> mute
 //   -> limiter -> NaN guard + hard clip
 //
@@ -65,6 +68,9 @@ public:
 
     [[nodiscard]] VoiceIsolator& isolator() noexcept { return *isolator_; }
 
+    // The most the chain adds besides strict isolation (suppressor + active voice character), for delay budgets.
+    [[nodiscard]] int maxLatencyWithoutIsolationSamples() const noexcept;
+
 private:
     [[nodiscard]] SuppressorKind resolveTarget(const EngineParameters& params, bool& unavailable) const noexcept;
     float runSuppressor(SuppressorKind kind, const float* in, float* out, float strength) noexcept;
@@ -76,6 +82,7 @@ private:
     std::unique_ptr<RnnoiseSuppressor> rnnoise_;
     std::unique_ptr<VoiceIsolator> isolator_;
     NoiseGate gate_;
+    VoiceStabilizer stabilizer_;
     Equalizer equalizer_;
     Compressor compressor_;
     PitchShifter pitch_;

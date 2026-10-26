@@ -14,6 +14,7 @@ VoiceProcessingChain::VoiceProcessingChain()
     const auto rate = static_cast<float>(kSampleRate);
     highPass_.prepare(rate, kFrameSize);
     gate_.prepare(rate, kFrameSize);
+    stabilizer_.prepare(rate, kFrameSize);
     equalizer_.prepare(rate, kFrameSize);
     compressor_.prepare(rate, kFrameSize);
     pitch_.prepare(rate, kFrameSize);
@@ -46,6 +47,7 @@ void VoiceProcessingChain::reset() noexcept {
     }
     isolator_->reset();
     gate_.reset();
+    stabilizer_.reset();
     equalizer_.reset();
     compressor_.reset();
     pitch_.reset();
@@ -92,6 +94,11 @@ int VoiceProcessingChain::suppressorLatency(SuppressorKind kind) const noexcept 
     case SuppressorKind::RNNoise: return rnnoise_ ? rnnoise_->algorithmicLatencySamples() : 0;
     default: return 0;
     }
+}
+
+int VoiceProcessingChain::maxLatencyWithoutIsolationSamples() const noexcept {
+    return std::max(suppressorLatency(SuppressorKind::RNNoise), suppressorLatency(SuppressorKind::DspOnly)) +
+           pitch_.activeLatencySamples();
 }
 
 IAudioProcessor* VoiceProcessingChain::effectFor(EffectSlot slot) noexcept {
@@ -154,6 +161,14 @@ void VoiceProcessingChain::process(float* frame, const EngineParameters& params,
     gate_.updateParameters(params);
     gate_.process(frame, n);
     diag.gateGainDb = gate_.currentGainDb();
+
+    // 4b. Voice stabilizer: the same level and tone close to the microphone or further away, so the effects
+    //     below always get the same voice.
+    stabilizer_.setVoiceProbability(vad);
+    stabilizer_.updateParameters(params);
+    stabilizer_.process(frame, n);
+    diag.stabilizerGainDb = stabilizer_.currentGainDb();
+    diag.stabilizerToneDb = stabilizer_.currentToneDb();
 
     // 5. Voice effects in user-defined order.
     for (EffectSlot slot : params.effectOrder()) {

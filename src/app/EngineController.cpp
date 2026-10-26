@@ -136,7 +136,7 @@ EngineController::EngineController(QObject* parent) : QObject(parent), settingsP
                                                 appDataDirectory() / L"voice" / L"voice_sample.wav");
     refreshIsolation();
 
-    supervisor_->applyConfig(settings_.engine);
+    supervisor_->applyConfig(effectiveEngineConfig());
     supervisor_->launch();
     supervisor_->setEnabled(settings_.engineEnabled);
 
@@ -288,9 +288,30 @@ const AudioDeviceInfo* EngineController::suggestedMicrophone() const {
     return first;
 }
 
+EngineConfig EngineController::effectiveEngineConfig() const {
+    // Following the Windows default microphone must never mean listening to a virtual microphone - typically
+    // VoiceStudio's own, after it was made the Windows default for call apps. VoiceStudio would then process its
+    // own output and nobody would hear the real voice. Use the real microphone instead (the setting is kept).
+    EngineConfig config = settings_.engine;
+    if (config.inputFollowDefault) {
+        const bool defaultIsVirtual = std::any_of(inputDeviceInfos_.begin(), inputDeviceInfos_.end(),
+                                                  [](const AudioDeviceInfo& d) { return d.isDefault && d.isVirtualCable; });
+        if (defaultIsVirtual) {
+            if (const AudioDeviceInfo* mic = suggestedMicrophone()) {
+                config.inputFollowDefault = false;
+                config.inputDeviceId = mic->id;
+            }
+        }
+    }
+    return config;
+}
+
 const AudioDeviceInfo* EngineController::voiceStudioFeed() const {
+    // By endpoint name, or by the device it belongs to: Windows can keep an endpoint's old name after a driver
+    // update (driver builds before 2026-10-25 showed it as "SinkDescription Sample (VoiceStudio Virtual Audio)").
+    // The driver has only this one playback endpoint.
     for (const AudioDeviceInfo& d : outputDeviceInfos_) {
-        if (containsCi(d.name, L"voicestudio mic feed")) {
+        if (containsCi(d.name, L"voicestudio mic feed") || containsCi(d.name, L"(voicestudio virtual audio)")) {
             return &d;
         }
     }
@@ -548,6 +569,7 @@ void EngineController::autoSelectCableOutput() {
 void EngineController::onDeviceEvent(const DeviceEvent& event) {
     refreshDevices();
     autoSelectCableOutput(); // e.g. the VoiceStudio Virtual Microphone was just installed
+    supervisor_->applyConfig(effectiveEngineConfig()); // the default microphone may have become a virtual one
     if (event.type == DeviceEventType::DefaultChanged) {
         supervisor_->notifyDefaultDeviceChanged(event.flow == DeviceFlow::Capture);
     } else {
@@ -604,13 +626,14 @@ void EngineController::setMonitorEnabled(bool enabled) {
 
 void EngineController::updateRoutingWarning() {
     QString warning;
+    const EngineConfig effective = effectiveEngineConfig(); // a virtual default microphone is already avoided there
     const std::wstring inputId =
-        settings_.engine.inputFollowDefault ? deviceManager_->defaultDeviceId(DeviceFlow::Capture) : settings_.engine.inputDeviceId;
+        effective.inputFollowDefault ? deviceManager_->defaultDeviceId(DeviceFlow::Capture) : effective.inputDeviceId;
     for (const AudioDeviceInfo& d : inputDeviceInfos_) {
         if (d.id == inputId && d.isVirtualCable) {
             warning = QStringLiteral("The microphone input is a virtual audio device (%1), not a physical microphone. "
                                      "That adds latency and can loop audio back on itself. Select your physical "
-                                     "microphone in Audio Devices.")
+                                     "microphone in Setup.")
                           .arg(qs(d.name));
         }
     }
@@ -639,7 +662,7 @@ void EngineController::updateRoutingWarning() {
 // ---- Engine config ------------------------------------------------------------------------
 
 void EngineController::pushConfig() {
-    supervisor_->applyConfig(settings_.engine);
+    supervisor_->applyConfig(effectiveEngineConfig());
     updateRoutingWarning();
     emit configChanged();
     refreshSetup();
@@ -665,7 +688,7 @@ void EngineController::setBufferMode(int mode) {
 }
 
 void EngineController::setOutputTargetMs(double ms) {
-    settings_.engine.outputTargetMs = std::clamp(ms, 2.0, 200.0);
+    settings_.engine.outputTargetMs = std::clamp(ms, 2.0, 60.0); // part of the 300 ms delay budget
     markCustomPerformance();
     pushConfig();
 }
@@ -995,6 +1018,8 @@ void EngineController::updateMeters() {
     voiceProbability_ = m.voiceProbability.load(std::memory_order_relaxed);
     gateReductionDb_ = m.gateGainDb.load(std::memory_order_relaxed);
     compressorReductionDb_ = m.compressorGainDb.load(std::memory_order_relaxed);
+    stabilizerGainDb_ = running ? m.stabilizerGainDb.load(std::memory_order_relaxed) : 0.0;
+    stabilizerToneDb_ = running ? m.stabilizerToneDb.load(std::memory_order_relaxed) : 0.0;
     activeSuppressor_ = QString::fromLatin1(
         suppressorKindName(static_cast<SuppressorKind>(m.activeSuppressor.load(std::memory_order_relaxed))));
     emit metersChanged();
@@ -1143,6 +1168,13 @@ void EngineController::updateStats() {
         running && info.outputRunning ? round1(capturePeriod + framingMs + algorithmicMs + processingMs + resamplerMs + jitterMs + renderQueueMs)
                                       : -1.0;
     s["processingAddedMs"] = round2(framingMs + algorithmicMs + processingMs + resamplerMs + jitterMs);
+    // The 300 ms limit (microphone to the app recording the virtual microphone) and how it is shared out.
+    s["latencyBudgetMs"] = kMaxTotalLatencyMs;
+    s["latencyWithVirtualMicMs"] =
+        running && info.outputRunning ? round1(capturePeriod + framingMs + algorithmicMs + processingMs + resamplerMs +
+                                               jitterMs + renderQueueMs + kVirtualMicLatencyMs)
+                                      : -1.0;
+    s["isolationMaxMs"] = round1(info.isolationMaxMs);
 
     // Strict voice isolation: worker-thread inference times and fail-closed counters.
     VoiceIsolator::Metrics& iso = supervisor_->engine().isolator().metrics();
@@ -1177,6 +1209,7 @@ void EngineController::updateStats() {
     s["isolationUnderruns"] = static_cast<qulonglong>(iso.underruns.load());
     s["isolationOverruns"] = static_cast<qulonglong>(iso.overruns.load());
     s["isolationModelFailures"] = static_cast<qulonglong>(iso.modelFailures.load());
+    s["isolationLatencyCaps"] = static_cast<qulonglong>(iso.latencyCaps.load());
     s["isolationSilencedFrames"] = static_cast<qulonglong>(iso.silencedFrames.load());
     s["isolationIsolatedFrames"] = static_cast<qulonglong>(iso.isolatedFrames.load());
 

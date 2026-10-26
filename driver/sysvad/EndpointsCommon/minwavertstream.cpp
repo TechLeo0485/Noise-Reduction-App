@@ -1470,11 +1470,9 @@ VOID CMiniportWaveRTStream::UpdatePosition
                                         0);
         }
 
-        if (!g_DoNotCreateDataFiles)
-        {
-            // Read from buffer and write to a file.
-            ReadBytes(ByteDisplacement);
-        }
+        // VoiceStudio: always pass the feed to the virtual microphone. (SysVAD only read the buffer to save it
+        // to a file, which g_DoNotCreateDataFiles turns off by default - the microphone stayed silent.)
+        ReadBytes(ByteDisplacement);
     }
     
     // Increment the DMA position by the number of bytes displaced since the last

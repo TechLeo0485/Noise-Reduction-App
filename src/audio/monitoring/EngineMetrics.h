@@ -42,6 +42,8 @@ public:
     std::atomic<float> gateGainDb{0.0f};
     std::atomic<float> compressorGainDb{0.0f};
     std::atomic<float> limiterGainDb{0.0f};
+    std::atomic<float> stabilizerGainDb{0.0f};
+    std::atomic<float> stabilizerToneDb{0.0f};
     std::atomic<int> activeSuppressor{-1};
     std::atomic<bool> requestedModeUnavailable{false};
     std::atomic<int> algorithmicLatencySamples{0};

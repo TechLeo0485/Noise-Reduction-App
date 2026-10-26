@@ -314,7 +314,8 @@ Return Value:
 
 //=============================================================================
 
-#define SINK_DESC_STR L"SinkDescription Sample"
+// VoiceStudio: Windows names HDMI-type endpoints after the sink description, not the INF name.
+#define SINK_DESC_STR L"VoiceStudio Mic Feed"
 
 NTSTATUS
 CHdmiMiniportTopology::PropertyHandlerJackSinkInfo

@@ -11,7 +11,7 @@ Rectangle {
     Layout.fillWidth: true
     implicitHeight: 6
     radius: 3
-    color: Theme.surfaceRaised
+    color: Theme.surfaceHover
 
     Rectangle {
         width: parent.width * Math.max(0, Math.min(1, root.value))

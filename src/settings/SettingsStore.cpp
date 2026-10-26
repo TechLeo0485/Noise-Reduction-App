@@ -149,9 +149,9 @@ bool SettingsStore::fromJson(const QByteArray& json, AppSettings& out, QString* 
     s.engine.monitorDeviceId = wideString(engine, "monitorDeviceId");
     s.engine.monitorEnabled = boolean(engine, "monitorEnabled", false);
     s.engine.bufferMode = static_cast<BufferMode>(static_cast<int>(clampedNumber(engine, "bufferMode", 1, 0, 2)));
-    s.engine.safeBufferMs = clampedNumber(engine, "safeBufferMs", 30.0, 10.0, 200.0);
-    s.engine.outputTargetMs = clampedNumber(engine, "outputTargetMs", 12.0, 2.0, 200.0);
-    s.engine.maxExtraMs = clampedNumber(engine, "maxExtraMs", 40.0, 10.0, 500.0);
+    s.engine.safeBufferMs = clampedNumber(engine, "safeBufferMs", 30.0, 10.0, 100.0);
+    s.engine.outputTargetMs = clampedNumber(engine, "outputTargetMs", 12.0, 2.0, 60.0);
+    s.engine.maxExtraMs = clampedNumber(engine, "maxExtraMs", 40.0, 10.0, 60.0);
     s.engine.deadlineMs = clampedNumber(engine, "deadlineMs", 5.0, 0.5, 10.0);
     s.engine.autoRecover = boolean(engine, "autoRecover", true);
     s.engineEnabled = boolean(engine, "enabled", true);

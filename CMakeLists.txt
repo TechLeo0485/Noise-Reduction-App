@@ -49,6 +49,7 @@ add_library(vs_core STATIC
     src/dsp/Limiter.cpp
     src/dsp/Equalizer.cpp
     src/dsp/PitchShifter.cpp
+    src/dsp/VoiceStabilizer.cpp
     src/dsp/DspNoiseSuppressor.cpp
     src/ai/rnnoise/RnnoiseSuppressor.cpp
     src/ai/voxlock/VoxLockStream.cpp
@@ -145,6 +146,11 @@ if(VOICESTUDIO_BUILD_APP)
             ui/Main.qml
             ui/themes/Theme.qml
             ui/components/Card.qml
+            ui/components/CardGrid.qml
+            ui/components/LatencyMeter.qml
+            ui/components/LookPicker.qml
+            ui/components/StabilizerReadout.qml
+            ui/components/StatusPill.qml
             ui/components/ChecklistItem.qml
             ui/components/ChipRow.qml
             ui/components/Expander.qml
@@ -156,7 +162,6 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/ParamSlider.qml
             ui/components/ParamSwitch.qml
             ui/components/ProgressBarThin.qml
-            ui/components/TwoColumns.qml
             ui/components/ScreenPage.qml
             ui/components/StatRow.qml
             ui/components/VsButton.qml

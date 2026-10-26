@@ -46,7 +46,7 @@ TEST(SettingsStore, ValuesAreValidatedOnLoad) {
     })";
     AppSettings s;
     ASSERT_TRUE(SettingsStore::fromJson(json, s));
-    EXPECT_DOUBLE_EQ(s.engine.outputTargetMs, 200.0);
+    EXPECT_DOUBLE_EQ(s.engine.outputTargetMs, 60.0); // part of the 300 ms delay budget
     EXPECT_EQ(s.engine.bufferMode, BufferMode::Safe);
     EXPECT_TRUE(s.engine.inputFollowDefault); // no device ID -> follow default
     EXPECT_FLOAT_EQ(s.params[static_cast<std::size_t>(ParamId::BassDb)], 12.0f);

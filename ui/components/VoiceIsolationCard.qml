@@ -12,7 +12,7 @@ Card {
 
     title: "Only send my voice"
     subtitle: "Removes other people's voices, even when they talk at the same time as you"
-    icon: ""
+    icon: "\uE716"
 
     VsSwitch {
         label: "Strict voice isolation"
@@ -28,8 +28,8 @@ Card {
         Layout.fillWidth: true
         implicitHeight: silenceText.implicitHeight + 20
         radius: Theme.radiusSmall
-        color: "#2A2210"
-        border.color: Theme.warning
+        color: Theme.warningMuted
+        border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.4)
         Text {
             id: silenceText
             anchors.fill: parent
@@ -58,6 +58,16 @@ Card {
             monospace: true
         }
         StatRow { label: "Isolation latency (measured)"; value: root.on ? Theme.fmt(backend.stats.isolationLatencyMs, 1, "ms") : "-"; monospace: true }
+        StatRow {
+            label: "Isolation latency limit (300 ms in total)"
+            value: Theme.fmt(backend.stats.isolationMaxMs, 0, "ms")
+            monospace: true
+        }
+        StatRow {
+            label: "Backlog dropped to stay under the limit"
+            value: backend.stats.isolationLatencyCaps !== undefined ? String(backend.stats.isolationLatencyCaps) : "n/a"
+            monospace: true
+        }
         StatRow { label: "Inference per chunk (P50)"; value: Theme.fmt(backend.stats.isolationInferenceP50Ms, 2, "ms"); monospace: true }
         StatRow { label: "Inference per chunk (P99)"; value: Theme.fmt(backend.stats.isolationInferenceP99Ms, 2, "ms"); monospace: true }
         StatRow {

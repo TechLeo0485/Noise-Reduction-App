@@ -92,7 +92,9 @@ RunResult run(VoiceIsolator& isolator, const std::vector<float>& x, bool enabled
 void expectFailClosed(const std::vector<float>& x, const RunResult& r, std::size_t firstFrame = 0) {
     for (std::size_t f = firstFrame; f < r.info.size(); ++f) {
         const float* y = r.out.data() + f * kFrame;
-        const bool fadeIn = f == 0 || !r.info[f - 1].delivering; // first frame after silence is faded in
+        // Faded in: the first frame after silence, and the frame after dropped backlog (the delay got shorter).
+        const bool fadeIn = f == 0 || !r.info[f - 1].delivering ||
+                            r.info[f].latencySamples < r.info[f - 1].latencySamples;
         if (!r.info[f].delivering) {
             for (std::size_t i = 0; i < kFrame; ++i) {
                 ASSERT_EQ(y[i], 0.0f) << "frame " << f << " not silent while isolation could not deliver";
@@ -142,6 +144,32 @@ TEST(VoiceIsolator, DeliversDelayedIsolatedVoiceUnderLatencyTarget) {
     }
     EXPECT_GT(delivered, r.info.size() / 2);
     EXPECT_GT(isolator.metrics().isolatedFrames.load(), 0u);
+}
+
+TEST(VoiceIsolator, DelayNeverExceedsTheLimit) {
+    VoiceIsolator isolator;
+    isolator.setMaxLatencyMs(55.0);
+    EXPECT_NEAR(isolator.maxLatencyMs(), 55.0, 0.1);
+    // A worker that is sometimes late (12 ms per 16 ms chunk, frames fed in bursts) grows the cushion.
+    isolator.initializeWithModel(identity(nullptr, 12), 2);
+    const std::vector<float> x = testSignal(48000 * 3);
+    const RunResult r = run(isolator, x, true, 1);
+    std::size_t delivered = 0;
+    for (const auto& i : r.info) {
+        if (i.delivering) {
+            ++delivered;
+            ASSERT_LE(i.latencySamples, 55 * 48) << "the isolated voice fell further behind than allowed";
+        }
+    }
+    EXPECT_GT(delivered, r.info.size() / 3);
+}
+
+TEST(VoiceIsolator, DelayLimitIsClampedToASaneRange) {
+    VoiceIsolator isolator;
+    isolator.setMaxLatencyMs(5.0);
+    EXPECT_NEAR(isolator.maxLatencyMs(), 50.0, 0.1);
+    isolator.setMaxLatencyMs(900.0);
+    EXPECT_NEAR(isolator.maxLatencyMs(), 250.0, 0.1);
 }
 
 TEST(VoiceIsolator, InferenceFailureMutesInsteadOfPassingMicrophone) {
