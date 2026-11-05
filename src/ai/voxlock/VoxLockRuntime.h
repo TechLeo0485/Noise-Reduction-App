@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ai/voxlock/SpeakerCheck.h"
 #include "ai/voxlock/VoxLockStream.h"
 
 #include <cstdint>
@@ -45,6 +46,10 @@ public:
     // optimisation folds the enrollment-only branch, see bindInputsAsConstants()).
     [[nodiscard]] std::unique_ptr<IChunkModel> createChunkModel(const EnrollmentTensors& enrollment,
                                                                 const ChunkModelOptions& options, std::string& error);
+
+    // The speaker-verification network (CAM++) for the voice check, from the same model directory. Its own
+    // single-threaded CPU session; nullptr with `error` set if the file is missing or unusable.
+    [[nodiscard]] std::unique_ptr<ISpeakerModel> createSpeakerModel(std::string& error);
 
     [[nodiscard]] std::string description() const;
     // This build and the loaded runtime can run models on GPUs (DirectML).

@@ -35,6 +35,11 @@ struct AppSettings {
     std::string processor = "auto";
     // Devices the user marked as a virtual microphone (their own driver, or any device the name check misses).
     std::vector<std::wstring> virtualDeviceIds;
+    // System-wide shortcuts (formatHotkey() text, "" = off). Three modifiers, so they clash with few other apps.
+    static constexpr const char* kDefaultHotkeyShowWindow = "Ctrl+Alt+Shift+V";
+    static constexpr const char* kDefaultHotkeyMute = "Ctrl+Alt+Shift+M";
+    std::string hotkeyShowWindow = kDefaultHotkeyShowWindow;
+    std::string hotkeyMute = kDefaultHotkeyMute;
 
     AppSettings();
     void captureParams(const EngineParameters& source);

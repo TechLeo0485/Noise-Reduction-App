@@ -66,9 +66,11 @@ endif()
 #                        Windows' own System32 copy is older; VoxLockRuntime.cpp loads this one by full path.
 #   VoxLock            - Apache-2.0 (arbazsiddiqui/voxlock). enroll.onnx + chunk_int8_full.onnx,
 #                        pinned to a Hugging Face revision and verified by SHA-256.
+#   CAM++ (3D-Speaker)   - Apache-2.0. Speaker verification for the voice check (speech_campplus_sv_en_voxceleb_16k,
+#                        ONNX export from the sherpa-onnx "speaker-recongition-models" release), verified by SHA-256.
 #
 # All are fetched at configure time only. The application never downloads anything at runtime.
-# Offline builds: set ONNXRUNTIME_ROOT / DIRECTML_ROOT (extracted packages) and VOXLOCK_MODEL_DIR (the two .onnx files).
+# Offline builds: set ONNXRUNTIME_ROOT / DIRECTML_ROOT (extracted packages) and VOXLOCK_MODEL_DIR (the three .onnx files).
 # ONNXRUNTIME_ROOT may also point at a plain CPU package (include/, lib/); GPUs are then listed as unavailable.
 if(VOICESTUDIO_WITH_VOXLOCK)
     set(ONNXRUNTIME_URL "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg"
@@ -134,10 +136,13 @@ if(VOICESTUDIO_WITH_VOXLOCK)
     endif()
 
     set(VOXLOCK_REVISION "a50f4e1d109301d4b6f61dec57ebb1a61e7d8f03" CACHE STRING "Hugging Face revision of arbazsiddiqui/voxlock")
-    set(VOXLOCK_MODEL_DIR "" CACHE PATH "Directory holding enroll.onnx and chunk_int8_full.onnx (skips the download)")
+    set(VOXLOCK_MODEL_DIR "" CACHE PATH "Directory holding the VoxLock and CAM++ .onnx files (skips the download)")
+    set(_voxlock_hf "https://huggingface.co/arbazsiddiqui/voxlock/resolve/${VOXLOCK_REVISION}/onnx")
+    set(_campplus_url "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models")
     set(_voxlock_files
-        "enroll.onnx|86645cba23f207def0b31a6e74a615d3b7a813b4fdf957c53b3af2905ba2ffd3"
-        "chunk_int8_full.onnx|7b57c1bfd5acd5b33768a9dff09d9af487d45374b3ba0b991e541ff121eaa337")
+        "enroll.onnx|86645cba23f207def0b31a6e74a615d3b7a813b4fdf957c53b3af2905ba2ffd3|${_voxlock_hf}"
+        "chunk_int8_full.onnx|7b57c1bfd5acd5b33768a9dff09d9af487d45374b3ba0b991e541ff121eaa337|${_voxlock_hf}"
+        "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx|357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b|${_campplus_url}")
     set(VOICESTUDIO_VOXLOCK_DIR "${CMAKE_BINARY_DIR}/_deps/voxlock-models")
     file(MAKE_DIRECTORY "${VOICESTUDIO_VOXLOCK_DIR}")
     set(VOICESTUDIO_VOXLOCK_FILES "")
@@ -145,6 +150,7 @@ if(VOICESTUDIO_WITH_VOXLOCK)
         string(REPLACE "|" ";" _parts "${_entry}")
         list(GET _parts 0 _name)
         list(GET _parts 1 _sha)
+        list(GET _parts 2 _url)
         set(_dest "${VOICESTUDIO_VOXLOCK_DIR}/${_name}")
         set(_have FALSE)
         if(EXISTS "${_dest}")
@@ -153,23 +159,23 @@ if(VOICESTUDIO_WITH_VOXLOCK)
                 set(_have TRUE)
             endif()
         endif()
-        if(NOT _have AND VOXLOCK_MODEL_DIR)
+        if(NOT _have AND VOXLOCK_MODEL_DIR AND EXISTS "${VOXLOCK_MODEL_DIR}/${_name}")
             file(COPY_FILE "${VOXLOCK_MODEL_DIR}/${_name}" "${_dest}")
             file(SHA256 "${_dest}" _actual)
             if(NOT _actual STREQUAL _sha)
                 file(REMOVE "${_dest}")
-                message(FATAL_ERROR "${VOXLOCK_MODEL_DIR}/${_name} does not match the pinned VoxLock model (SHA-256 ${_sha})")
+                message(FATAL_ERROR "${VOXLOCK_MODEL_DIR}/${_name} does not match the pinned model (SHA-256 ${_sha})")
             endif()
             set(_have TRUE)
         endif()
         if(NOT _have)
-            message(STATUS "Downloading VoxLock ${_name} ...")
-            file(DOWNLOAD "https://huggingface.co/arbazsiddiqui/voxlock/resolve/${VOXLOCK_REVISION}/onnx/${_name}" "${_dest}"
+            message(STATUS "Downloading ${_name} ...")
+            file(DOWNLOAD "${_url}/${_name}" "${_dest}"
                  EXPECTED_HASH SHA256=${_sha} INACTIVITY_TIMEOUT 60 STATUS _status)
             list(GET _status 0 _code)
             if(NOT _code EQUAL 0)
                 file(REMOVE "${_dest}")
-                message(FATAL_ERROR "Downloading VoxLock ${_name} failed: ${_status}. Set VOXLOCK_MODEL_DIR to "
+                message(FATAL_ERROR "Downloading ${_name} failed: ${_status}. Set VOXLOCK_MODEL_DIR to "
                                     "a directory with the files, or configure with -DVOICESTUDIO_WITH_VOXLOCK=OFF.")
             endif()
         endif()

@@ -9,6 +9,7 @@ namespace {
 
 // onnx.proto field numbers.
 constexpr std::uint32_t kModelGraph = 7;        // ModelProto.graph
+constexpr std::uint32_t kGraphNode = 1;         // GraphProto.node
 constexpr std::uint32_t kGraphInitializer = 5;  // GraphProto.initializer
 constexpr std::uint32_t kGraphInput = 11;       // GraphProto.input
 constexpr std::uint32_t kValueInfoName = 1;     // ValueInfoProto.name
@@ -17,6 +18,10 @@ constexpr std::uint32_t kTensorDataType = 2;    // TensorProto.data_type
 constexpr std::uint32_t kTensorName = 8;        // TensorProto.name
 constexpr std::uint32_t kTensorRawData = 9;     // TensorProto.raw_data
 constexpr std::uint64_t kFloat = 1;             // TensorProto.DataType.FLOAT
+constexpr std::uint32_t kNodeOpType = 4;        // NodeProto.op_type
+constexpr std::uint32_t kNodeAttribute = 5;     // NodeProto.attribute
+constexpr std::uint32_t kAttributeName = 1;     // AttributeProto.name
+constexpr std::uint32_t kAttributeInt = 3;      // AttributeProto.i
 
 enum WireType : std::uint32_t { kVarint = 0, kFixed64 = 1, kLengthDelimited = 2, kFixed32 = 5 };
 
@@ -169,7 +174,96 @@ bool patchGraph(const char* graph, std::size_t size, const std::vector<ConstantT
     return true;
 }
 
+// The string field `number` of a message payload, or empty.
+std::string stringField(const char* payload, std::size_t size, std::uint32_t number) {
+    Reader r(payload, size);
+    Field f;
+    while (!r.atEnd() && r.next(f)) {
+        if (f.number == number && f.wireType == kLengthDelimited) {
+            return {payload + f.payloadBegin, f.end - f.payloadBegin};
+        }
+    }
+    return {};
+}
+
+// Copies a NodeProto, replacing the `i` of the attribute named `attribute`. Returns false if it has none.
+bool patchNode(const char* node, std::size_t size, const std::string& attribute, std::int64_t value, std::vector<char>& out) {
+    bool patched = false;
+    Reader r(node, size);
+    Field f;
+    while (!r.atEnd() && r.next(f)) {
+        if (f.number == kNodeAttribute && f.wireType == kLengthDelimited &&
+            stringField(node + f.payloadBegin, f.end - f.payloadBegin, kAttributeName) == attribute) {
+            std::vector<char> attr;
+            Reader a(node + f.payloadBegin, f.end - f.payloadBegin);
+            Field af;
+            while (!a.atEnd() && a.next(af)) {
+                if (af.number != kAttributeInt) {
+                    attr.insert(attr.end(), node + f.payloadBegin + af.begin, node + f.payloadBegin + af.end);
+                }
+            }
+            writeTag(attr, kAttributeInt, kVarint);
+            writeVarint(attr, static_cast<std::uint64_t>(value));
+            writeBytes(out, kNodeAttribute, attr.data(), attr.size());
+            patched = true;
+            continue;
+        }
+        out.insert(out.end(), node + f.begin, node + f.end);
+    }
+    return patched;
+}
+
 } // namespace
+
+bool setNodeAttribute(const std::vector<char>& model, const std::string& opType, const std::string& attribute,
+                      std::int64_t value, std::vector<char>& out, int& changed, std::string& error) {
+    out.clear();
+    out.reserve(model.size() + 64);
+    changed = 0;
+    Reader r(model.data(), model.size());
+    Field f;
+    bool seenGraph = false;
+    while (!r.atEnd()) {
+        if (!r.next(f)) {
+            error = "malformed ModelProto";
+            return false;
+        }
+        if (f.number != kModelGraph || f.wireType != kLengthDelimited || seenGraph) {
+            out.insert(out.end(), model.data() + f.begin, model.data() + f.end);
+            continue;
+        }
+        seenGraph = true;
+        const char* graph = model.data() + f.payloadBegin;
+        std::vector<char> patchedGraph;
+        patchedGraph.reserve(f.end - f.payloadBegin + 64);
+        Reader g(graph, f.end - f.payloadBegin);
+        Field gf;
+        while (!g.atEnd()) {
+            if (!g.next(gf)) {
+                error = "malformed GraphProto";
+                return false;
+            }
+            const char* node = graph + gf.payloadBegin;
+            const std::size_t nodeSize = gf.end - gf.payloadBegin;
+            if (gf.number == kGraphNode && gf.wireType == kLengthDelimited && stringField(node, nodeSize, kNodeOpType) == opType) {
+                std::vector<char> patchedNode;
+                patchedNode.reserve(nodeSize + 8);
+                if (patchNode(node, nodeSize, attribute, value, patchedNode)) {
+                    writeBytes(patchedGraph, kGraphNode, patchedNode.data(), patchedNode.size());
+                    ++changed;
+                    continue;
+                }
+            }
+            patchedGraph.insert(patchedGraph.end(), graph + gf.begin, graph + gf.end);
+        }
+        writeBytes(out, kModelGraph, patchedGraph.data(), patchedGraph.size());
+    }
+    if (!seenGraph) {
+        error = "model has no graph";
+        return false;
+    }
+    return true;
+}
 
 bool bindInputsAsConstants(const std::vector<char>& model, const std::vector<ConstantTensor>& tensors,
                            std::vector<char>& out, std::string& error) {

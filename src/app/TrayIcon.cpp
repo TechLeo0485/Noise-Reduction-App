@@ -59,6 +59,18 @@ void TrayIcon::showWindow() {
     window_.requestActivate();
 }
 
+void TrayIcon::setShortcutHints(const QString& open, const QString& mute) {
+    if (!available_) {
+        return;
+    }
+    // Text after a tab is drawn as the shortcut column of the menu.
+    const auto withHint = [](const char* label, const QString& keys) {
+        return keys.isEmpty() ? QString::fromLatin1(label) : QStringLiteral("%1	%2").arg(QLatin1String(label), keys);
+    };
+    open_->setText(withHint("Open VoiceStudio", open));
+    mute_->setText(withHint("Mute microphone", mute));
+}
+
 void TrayIcon::refresh() {
     if (!available_) {
         return;

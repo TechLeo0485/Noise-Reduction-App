@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ai/voxlock/SpeakerCheck.h"
 #include "ai/voxlock/VoxLockRuntime.h"
 #include "ai/voxlock/VoxLockStream.h"
 #include "audio/buffers/Resampler.h"
@@ -72,6 +73,7 @@ struct IsolationStatus {
     std::string processorName;
     std::vector<ProcessorTrial> trials; // last calibration, one entry per processor measured
     double prepareProgress = 0.0;   // 0..1 while a new voice is being prepared (busy)
+    bool voiceCheck = false;        // the speaker check is active (other voices are muted, see VoiceCheck)
 };
 
 struct IsolationFrameInfo {
@@ -85,6 +87,12 @@ struct IsolationFrameInfo {
 //   capture thread  : process() -> input ring -> [worker] -> output ring -> process()
 //   worker thread   : 48 kHz -> 16 kHz -> voxlock::Stream (ONNX Runtime) -> 48 kHz
 //   loader thread   : ONNX Runtime + models, enrollment (enroll.onnx), per-voice sessions, calibration
+//
+//   checker thread  : isolated 16 kHz output -> voxlock::VoiceCheck (CAM++ speaker embedding) -> gate + state reset
+//
+// Voice check: VoxLock alone lets a similar voice through while the user is silent (see SpeakerCheck.h). The
+// checker compares the isolated speech with the user's voice every 0.3 s; while it is someone else, the worker
+// fades the output to silence (20 ms) and the model's LSTM state is reset so it locks onto the user again.
 //
 // Fail-closed: while enabled, process() outputs the isolated voice or silence - never the microphone
 // signal. That covers loading, a missing/invalid model, a missing enrollment, a worker that falls behind
@@ -174,6 +182,9 @@ public:
         std::atomic<std::uint64_t> silencedFrames{0}; // enabled, but no isolated audio was available
         std::atomic<std::uint64_t> isolatedFrames{0};
         std::atomic<std::uint64_t> latencyCaps{0};    // backlog above the delay limit was dropped
+        std::atomic<std::uint64_t> voiceCheckMutes{0}; // the voice check muted another voice
+        std::atomic<float> voiceCheckScore{1.0f};     // similarity of the latest checked speech to the user's voice
+        std::atomic<bool> voiceGateOpen{true};        // false: muted because someone else is speaking
         std::atomic<float> latencyMs{0.0f};           // measured delay of the isolated voice (48 kHz in/out)
         std::atomic<float> lastInferenceUs{0.0f};
         std::atomic<bool> delivering{false};
@@ -203,6 +214,9 @@ private:
     void requestRestart() noexcept;
     void workerReset();
     void workerProcess();
+    void checkerMain();
+    // The user's voice for the voice check, from their whole recording (loader thread).
+    void updateSpeakerReference(const std::vector<float>& recording16k);
 
     // Control / status
     mutable std::mutex statusMutex_;
@@ -265,6 +279,25 @@ private:
 
     SpscRingBuffer<float> inRing_;
     SpscRingBuffer<float> outRing_;
+
+    // Voice check: worker -> checkRing_ -> checker thread -> gate / state reset requests -> worker
+    std::thread checker_;
+    void* checkEvent_ = nullptr;
+    std::mutex speakerMutex_;                         // the speaker model and the reference
+    std::unique_ptr<voxlock::ISpeakerModel> speakerModel_;
+    std::vector<float> speakerReference_;
+    std::atomic<bool> checkActive_{false};            // model and reference available
+    SpscRingBuffer<float> checkRing_;
+    std::atomic<int> gate_{0};                        // voxlock::VoiceCheck::Gate; the worker turns
+                                                      // OpenOnSpeech into Open on the first loud chunk
+    std::atomic<float> speechLevel_{1e-5f};           // checker: mean square that counts as speech
+    std::atomic<std::uint32_t> stateResets_{0};       // checker: requests; the worker resets the LSTM state
+    std::atomic<std::uint32_t> checkRestarts_{0};     // worker: the stream restarted, start judging afresh
+    std::uint32_t seenStateResets_ = 0;               // worker
+    float gateGain_ = 1.0f;                           // worker
+    voxlock::VoiceCheck voiceCheck_;                  // checker
+    voxlock::VoiceCheck::Gate publishedGate_ = voxlock::VoiceCheck::Gate::Open; // checker
+    std::uint32_t seenCheckRestarts_ = 0;             // checker
 
     // Capture-thread state
     bool wasEnabled_ = false;

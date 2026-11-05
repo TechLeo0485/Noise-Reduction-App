@@ -1,4 +1,4 @@
-#include "ai/voxlock/VoxLockRuntime.h"
+﻿#include "ai/voxlock/VoxLockRuntime.h"
 
 #include "ai/voxlock/OnnxModelPatch.h"
 #include "core/RealtimeThread.h"
@@ -25,6 +25,7 @@ namespace {
 
 constexpr const char* kEnrollFile = "enroll.onnx";
 constexpr const char* kChunkFile = "chunk_int8_full.onnx";
+constexpr const char* kSpeakerFile = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
 
 // One ONNX Runtime per process. Deliberately never unloaded: sessions may still be finishing on other
 // threads during shutdown, and unloading the DLL then would crash.
@@ -188,10 +189,64 @@ private:
     std::array<std::int64_t, 3> framesShape_{};
 };
 
+// CAM++ speaker embedding: fbank (T, 80) -> 512 values, returned at unit length.
+class OrtSpeakerModel final : public ISpeakerModel {
+public:
+    explicit OrtSpeakerModel(Ort::Session session)
+        : session_(std::move(session)), memory_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
+        Ort::AllocatorWithDefaultOptions allocator;
+        inputName_ = session_.GetInputNameAllocated(0, allocator).get();
+        outputName_ = session_.GetOutputNameAllocated(0, allocator).get();
+    }
+
+    bool embed(const float* audio16k, std::size_t count, std::vector<float>& out) override {
+        const int frames = computeFbank(audio16k, count, features_);
+        if (frames < 10) {
+            return false;
+        }
+        try {
+            const std::array<std::int64_t, 3> shape{1, frames, kFbankBins};
+            Ort::Value input = Ort::Value::CreateTensor<float>(memory_, features_.data(), features_.size(), shape.data(),
+                                                               shape.size());
+            const char* inputName = inputName_.c_str();
+            const char* outputName = outputName_.c_str();
+            std::vector<Ort::Value> outputs = session_.Run(Ort::RunOptions{nullptr}, &inputName, &input, 1, &outputName, 1);
+            const auto info = outputs[0].GetTensorTypeAndShapeInfo();
+            const float* p = outputs[0].GetTensorData<float>();
+            out.assign(p, p + info.GetElementCount());
+        } catch (...) {
+            return false;
+        }
+        double norm = 0.0;
+        for (float v : out) {
+            if (!std::isfinite(v)) {
+                return false;
+            }
+            norm += static_cast<double>(v) * v;
+        }
+        if (norm <= 0.0) {
+            return false;
+        }
+        const auto scale = static_cast<float>(1.0 / std::sqrt(norm));
+        for (float& v : out) {
+            v *= scale;
+        }
+        return true;
+    }
+
+private:
+    Ort::Session session_;
+    Ort::MemoryInfo memory_;
+    std::string inputName_;
+    std::string outputName_;
+    std::vector<float> features_;
+};
+
 } // namespace
 
 struct Runtime::Impl {
     Ort::Env* env = nullptr;
+    std::filesystem::path modelDirectory;
     std::unique_ptr<Ort::Session> enrollSession;
     std::vector<char> chunkModelBytes; // kept to bind each new enrollment into a fresh session
 };
@@ -207,6 +262,7 @@ std::unique_ptr<Runtime> Runtime::create(const std::filesystem::path& dllDirecto
     }
     auto impl = std::make_unique<Impl>();
     impl->env = env;
+    impl->modelDirectory = modelDirectory;
     std::vector<char> enrollBytes;
     if (!readFile(modelDirectory / kEnrollFile, enrollBytes, error) ||
         !readFile(modelDirectory / kChunkFile, impl->chunkModelBytes, error)) {
@@ -303,6 +359,34 @@ std::unique_ptr<IChunkModel> Runtime::createChunkModel(const EnrollmentTensors& 
         return std::make_unique<OrtChunkModel>(std::move(session), k);
     } catch (const std::exception& e) {
         error = std::string("Cannot load chunk_int8_full.onnx: ") + e.what();
+        return nullptr;
+    }
+}
+
+std::unique_ptr<ISpeakerModel> Runtime::createSpeakerModel(std::string& error) {
+    std::vector<char> original;
+    if (!readFile(impl_->modelDirectory / kSpeakerFile, original, error)) {
+        return nullptr;
+    }
+    // CAM++ averages segments with AveragePool(kernel 100, ceil_mode=1, count_include_pad=1), trained in PyTorch,
+    // which divides a shorter last segment by its real length. ONNX Runtime 1.24 divides it by 100 instead, and the
+    // embeddings then hardly tell voices apart (a different speaker scored ~0.6 instead of ~0.0). Without padding
+    // (pads are 0), count_include_pad=0 gives PyTorch's result on every ONNX Runtime version.
+    std::vector<char> bytes;
+    int changed = 0;
+    if (!setNodeAttribute(original, "AveragePool", "count_include_pad", 0, bytes, changed, error)) {
+        error = std::string("Cannot prepare ") + kSpeakerFile + ": " + error;
+        return nullptr;
+    }
+    try {
+        Ort::SessionOptions so;
+        so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        so.SetIntraOpNumThreads(1); // a check every 0.3 s at most; keeps the cores for the isolation itself
+        so.SetInterOpNumThreads(1);
+        Ort::Session session(*impl_->env, bytes.data(), bytes.size(), so);
+        return std::make_unique<OrtSpeakerModel>(std::move(session));
+    } catch (const std::exception& e) {
+        error = std::string("Cannot load ") + kSpeakerFile + ": " + e.what();
         return nullptr;
     }
 }

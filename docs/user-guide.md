@@ -145,7 +145,8 @@ The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** 
   The stabilizer evens out your level and that low end before the voice effects, so you sound the same at any distance.
   The two boxes under the switch show what it is correcting right now.
 * **Microphone volume** (Home): aim for the microphone meter to read **Good** when you speak normally.
-* **Mute**: **Mute microphone** in the sidebar, or right-click the tray icon → **Mute microphone**.
+* **Mute**: **Mute microphone** in the sidebar, right-click the tray icon → **Mute microphone**, or press
+  **Ctrl+Alt+Shift+M** anywhere (see *Keyboard shortcuts* below).
 
 ### Check how you sound
 
@@ -159,6 +160,20 @@ On **Home**, click **Record 5 s and play back**. VoiceStudio plays back exactly 
 * **Click** the icon to open the window. **Right-click** it to mute, switch strict isolation on or off, or **Quit**.
 * **Setup → Start with Windows** starts VoiceStudio automatically (hidden in the tray) when you sign in.
 * **Setup → Keep running when I close the window**: turn it off if you prefer that closing the window quits.
+
+### Keyboard shortcuts
+
+They work everywhere - in a game, in the call app, or while VoiceStudio is hidden in the tray.
+
+| Shortcut (default) | What it does |
+|---|---|
+| **Ctrl+Alt+Shift+V** | Shows the VoiceStudio window; press it again to hide the window (VoiceStudio keeps running in the tray) |
+| **Ctrl+Alt+Shift+M** | Mutes the microphone, or unmutes it again |
+
+To change one, open **Setup → Keyboard shortcuts**, click the keys and press the new combination (Esc cancels).
+Use Ctrl, Alt or Win together with a letter, number or F-key, so the keys keep working for typing in other apps.
+**Off** turns a shortcut off; **Default** brings the original keys back. If another app already uses the keys,
+the card says so - choose other keys. The tray menu shows the current shortcuts next to its entries.
 
 ---
 

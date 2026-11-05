@@ -1,5 +1,6 @@
 #include "app/CrashHandler.h"
 #include "app/EngineController.h"
+#include "app/GlobalHotkeys.h"
 #include "app/TrayIcon.h"
 #include "diagnostics/Logger.h"
 
@@ -102,8 +103,10 @@ int main(int argc, char* argv[]) {
     int exitCode = 0;
     {
         vs::EngineController controller;
+        vs::GlobalHotkeys hotkeys(controller);
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty(QStringLiteral("backend"), &controller);
+        engine.rootContext()->setContextProperty(QStringLiteral("hotkeys"), &hotkeys);
         QObject::connect(
             &engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(-1); },
             Qt::QueuedConnection);
@@ -116,6 +119,24 @@ int main(int argc, char* argv[]) {
             styleTitleBar(*window);
             vs::TrayIcon tray(controller, *window);
             controller.setTrayAvailable(tray.available());
+            // The "show" shortcut toggles: pressed while the window is in front, it hides it again (to the tray,
+            // or minimised without one); otherwise it brings the window to the front.
+            hotkeys.attach(*window, [&tray, window] {
+                const bool inFront = window->isVisible() && window->isActive() &&
+                                     !(window->windowState() & Qt::WindowMinimized);
+                if (!inFront) {
+                    tray.showWindow();
+                } else if (tray.available()) {
+                    window->hide();
+                } else {
+                    window->showMinimized();
+                }
+            });
+            const auto showHints = [&] {
+                tray.setShortcutHints(hotkeys.text(QStringLiteral("showWindow")), hotkeys.text(QStringLiteral("mute")));
+            };
+            QObject::connect(&hotkeys, &vs::GlobalHotkeys::changed, &tray, showHints);
+            showHints();
             // With a tray icon, closing the window only hides it; "Quit" in the tray menu ends the app.
             QApplication::setQuitOnLastWindowClosed(!tray.available());
             if (QApplication::arguments().contains(QStringLiteral("--guide"))) { // Start menu "User Guide"

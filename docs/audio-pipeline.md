@@ -71,6 +71,34 @@ call, weighted overlap-add with the squared Hann window and the -0.5 output gain
 - **Scheduling.** The worker, ONNX Runtime's pool thread and the loader opt out of power
   throttling and, on hybrid CPUs, run on the performance cores only (`preferPerformanceCores()`),
   because VoiceStudio usually runs in the background during a call.
+- **Voice check (other voices while the user is silent).** VoxLock follows "the voice most like the
+  sample". With only someone else talking it has no right answer, and a similar voice (same gender)
+  passed at full level; its LSTM state then stayed on that voice, so the user was cut by ~10 dB when
+  they spoke again. A checker thread (src/ai/voxlock/SpeakerCheck.cpp) runs the CAM++
+  speaker-verification network on the isolated 16 kHz output, before the gate: every 0.3 s with new
+  speech it compares the last 1.5 s of speech (pauses cut out) with a reference built from the user's
+  whole recording. Below a similarity of 0.15 the worker fades the output to silence in 20 ms and
+  resets the LSTM state (again every 0.5 s while muted: VoxLock locks onto the first voice it hears, so
+  the user must be heard after a fresh reset). A pause of 0.3 s ends the other voice's turn: the state
+  is reset, and the worker opens the gate itself (5 ms fade-in) on the first chunk of new speech, so
+  the user's first syllable passes. The checker judges that new speech after 0.4 s and mutes again
+  below 0.15; the other voice therefore passes for ~0.4 s at the start of each phrase after a pause.
+  Without a pause (talking over the other voice), the gate reopens above 0.22 over 0.8 s of speech.
+  The checker thread runs at below-normal priority on the E-cores. Measured with the user's recording
+  and TTS voices: the other voice went from 0 dB (fully passed) to about -10 dB overall (muted after
+  ~1.5 s, short leaks at phrase starts); the user's replies after pauses of 0.35-1.5 s keep their start
+  (0 dB from the first 250 ms instead of ~0.8 s muted); talking over the other voice keeps the user at
+  -4 dB instead of -10 dB. When another, louder voice keeps talking over the user in a noisy room the
+  model itself cannot separate them, so the output can stay muted.
+  CAM++ needs a small model fix for ONNX Runtime 1.24 (`AveragePool count_include_pad`, see
+  `Runtime::createSpeakerModel()`); without it every voice looked alike. Without the CAM++ file the
+  check is off and isolation works as before. `vs_isolation --similarity` prints the scores.
+- **Noise under the voice.** VoxLock silences noise in pauses but passes steady room noise under
+  the voice at almost full level. `NoiseFloorFilter` runs on each 32 ms output frame inside the
+  stream (no extra delay): per frequency it tracks the noise floor of the microphone input
+  (minimum of the smoothed spectrum, rising 3 dB/s) and subtracts it from the output frame
+  (x2, floor -18 dB, smoothed across bins). Fan + pink noise: noise between words 10-20 dB lower;
+  steady noise passed under the voice ~11 dB lower; the voice's SI-SDR about 1 dB lower.
 
 ## Real-time rules (enforced by construction)
 

@@ -51,4 +51,9 @@ void setCurrentThreadName(const wchar_t* name) noexcept;
 // logical processors selected (0 if the CPU has a single core class and nothing was restricted).
 int preferPerformanceCores() noexcept;
 
+// For helper threads that must not slow the real-time ones down (e.g. the voice check): below-normal
+// priority and, on hybrid CPUs, the slowest core class (the E-cores), away from the inference threads.
+// Returns the number of logical processors selected (0 if nothing was restricted).
+int preferEfficiencyCores() noexcept;
+
 } // namespace vs

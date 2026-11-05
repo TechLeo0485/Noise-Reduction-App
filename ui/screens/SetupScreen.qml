@@ -338,6 +338,17 @@ ScreenPage {
 
             Card {
                 Layout.fillHeight: true
+                title: "Keyboard shortcuts"
+                subtitle: "Work everywhere, even while you are in a game or call and VoiceStudio is hidden. Click the keys to change them."
+                icon: ""
+                Repeater {
+                    model: hotkeys.items
+                    HotkeyRow {}
+                }
+            }
+
+            Card {
+                Layout.fillHeight: true
                 title: "Delay"
                 subtitle: "From your microphone to the app that records the virtual microphone"
                 icon: "\uE916"

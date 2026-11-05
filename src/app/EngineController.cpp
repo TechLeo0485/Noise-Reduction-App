@@ -525,6 +525,27 @@ void EngineController::setCloseToTray(bool enabled) {
     }
 }
 
+QString EngineController::hotkey(const QString& action) const {
+    if (action == QLatin1String("showWindow")) {
+        return QString::fromStdString(settings_.hotkeyShowWindow);
+    }
+    if (action == QLatin1String("mute")) {
+        return QString::fromStdString(settings_.hotkeyMute);
+    }
+    return {};
+}
+
+void EngineController::setHotkey(const QString& action, const QString& text) {
+    std::string* slot = action == QLatin1String("showWindow") ? &settings_.hotkeyShowWindow
+                        : action == QLatin1String("mute")     ? &settings_.hotkeyMute
+                                                              : nullptr;
+    if (slot != nullptr && *slot != text.toStdString()) {
+        *slot = text.toStdString();
+        emit hotkeysChanged();
+        scheduleSave();
+    }
+}
+
 bool EngineController::startWithWindows() const {
     QSettings run(kRunKey, QSettings::NativeFormat);
     return run.contains(kRunValue);
@@ -802,6 +823,7 @@ void EngineController::resetToDefaults() {
     supervisor_->setEnabled(settings_.engineEnabled);
     emit paramsChanged();
     emit presetsChanged();
+    emit hotkeysChanged();
     pushConfig();
     refreshSetup();
 }
@@ -1210,6 +1232,8 @@ void EngineController::updateStats() {
     s["isolationOverruns"] = static_cast<qulonglong>(iso.overruns.load());
     s["isolationModelFailures"] = static_cast<qulonglong>(iso.modelFailures.load());
     s["isolationLatencyCaps"] = static_cast<qulonglong>(iso.latencyCaps.load());
+    s["isolationVoiceCheckMutes"] = static_cast<qulonglong>(iso.voiceCheckMutes.load());
+    s["isolationVoiceGateOpen"] = iso.voiceGateOpen.load();
     s["isolationSilencedFrames"] = static_cast<qulonglong>(iso.silencedFrames.load());
     s["isolationIsolatedFrames"] = static_cast<qulonglong>(iso.isolatedFrames.load());
 
@@ -1386,6 +1410,7 @@ void EngineController::refreshIsolation() {
     }
     iso["trials"] = trials;
     iso["adaptations"] = st.adaptations;
+    iso["voiceCheck"] = st.voiceCheck;
     // The voice sample only matches the microphone it was recorded with.
     iso["enrolledMicrophone"] = qs(st.enrolledMicrophone);
     iso["microphoneMismatch"] = st.enrolled && !st.enrolledMicrophone.empty() && !status_.info.inputName.empty() &&

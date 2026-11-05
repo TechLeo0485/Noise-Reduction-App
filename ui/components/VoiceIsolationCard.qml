@@ -68,6 +68,18 @@ Card {
             value: backend.stats.isolationLatencyCaps !== undefined ? String(backend.stats.isolationLatencyCaps) : "n/a"
             monospace: true
         }
+        StatRow {
+            label: "Voice check (mutes other voices)"
+            value: root.iso.voiceCheck === true
+                   ? (root.on && backend.stats.isolationVoiceGateOpen === false ? "muting another voice" : "active")
+                   : "off"
+            monospace: true
+        }
+        StatRow {
+            label: "Other voices muted"
+            value: backend.stats.isolationVoiceCheckMutes !== undefined ? String(backend.stats.isolationVoiceCheckMutes) : "n/a"
+            monospace: true
+        }
         StatRow { label: "Inference per chunk (P50)"; value: Theme.fmt(backend.stats.isolationInferenceP50Ms, 2, "ms"); monospace: true }
         StatRow { label: "Inference per chunk (P99)"; value: Theme.fmt(backend.stats.isolationInferenceP99Ms, 2, "ms"); monospace: true }
         StatRow {

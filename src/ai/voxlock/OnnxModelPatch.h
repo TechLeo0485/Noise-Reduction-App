@@ -25,4 +25,9 @@ struct ConstantTensor {
 bool bindInputsAsConstants(const std::vector<char>& model, const std::vector<ConstantTensor>& tensors,
                            std::vector<char>& out, std::string& error);
 
+// Sets the integer attribute `attribute` of every node with op type `opType` in the main graph to `value`
+// (nodes without that attribute are left alone). `changed` receives the number of nodes rewritten.
+bool setNodeAttribute(const std::vector<char>& model, const std::string& opType, const std::string& attribute,
+                      std::int64_t value, std::vector<char>& out, int& changed, std::string& error);
+
 } // namespace vs::voxlock

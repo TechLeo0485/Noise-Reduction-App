@@ -20,6 +20,8 @@ TEST(SettingsStore, JsonRoundTrip) {
     s.activePreset = "Gaming";
     s.customPresets["Mine"] = {{"bassDb", 2.0f}, {"trebleDb", -1.0f}};
     s.advancedUi = true;
+    s.hotkeyShowWindow = "Win+F9";
+    s.hotkeyMute = ""; // off
 
     AppSettings loaded;
     ASSERT_TRUE(SettingsStore::fromJson(SettingsStore::toJson(s), loaded));
@@ -35,6 +37,8 @@ TEST(SettingsStore, JsonRoundTrip) {
     EXPECT_EQ(loaded.activePreset, "Gaming");
     ASSERT_EQ(loaded.customPresets.count("Mine"), 1u);
     EXPECT_FLOAT_EQ(loaded.customPresets["Mine"]["trebleDb"], -1.0f);
+    EXPECT_EQ(loaded.hotkeyShowWindow, "Win+F9");
+    EXPECT_EQ(loaded.hotkeyMute, "");
 }
 
 TEST(SettingsStore, ValuesAreValidatedOnLoad) {
@@ -42,7 +46,9 @@ TEST(SettingsStore, ValuesAreValidatedOnLoad) {
         "version": 1,
         "engine": { "outputTargetMs": 100000, "bufferMode": 7, "inputFollowDefault": false, "inputDeviceId": "" },
         "params": { "bassDb": 99, "masterMute": 0.2, "unknownKey": 5 },
-        "effectOrder": ["eq", "eq", "pitch"]
+        "effectOrder": ["eq", "eq", "pitch"],
+        "hotkeyShowWindow": "M",
+        "hotkeyMute": "alt + shift + f5"
     })";
     AppSettings s;
     ASSERT_TRUE(SettingsStore::fromJson(json, s));
@@ -52,6 +58,8 @@ TEST(SettingsStore, ValuesAreValidatedOnLoad) {
     EXPECT_FLOAT_EQ(s.params[static_cast<std::size_t>(ParamId::BassDb)], 12.0f);
     EXPECT_FLOAT_EQ(s.params[static_cast<std::size_t>(ParamId::MasterMute)], 0.0f);
     EXPECT_EQ(s.effectOrder, defaultEffectOrder()); // duplicate entries rejected
+    EXPECT_EQ(s.hotkeyShowWindow, AppSettings::kDefaultHotkeyShowWindow); // a plain key would block typing
+    EXPECT_EQ(s.hotkeyMute, "Alt+Shift+F5");                             // stored in its canonical spelling
 }
 
 TEST(SettingsStore, RejectsCorruptOrFutureFiles) {

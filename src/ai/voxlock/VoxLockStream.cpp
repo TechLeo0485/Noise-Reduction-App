@@ -1,5 +1,7 @@
 #include "ai/voxlock/VoxLockStream.h"
 
+#include "ai/voxlock/NoiseFloorFilter.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -28,6 +30,23 @@ Stream::Stream(int framesPerRun, int maxPushSamples)
     }
 }
 
+Stream::~Stream() = default;
+
+void Stream::setNoiseFilter(bool enabled) {
+    if (!enabled) {
+        noiseFilter_.reset();
+    } else if (!noiseFilter_) {
+        noiseFilter_ = std::make_unique<NoiseFloorFilter>();
+    }
+}
+
+void Stream::resetState() noexcept {
+    for (int i = 0; i < 2; ++i) {
+        std::fill(h_[i].begin(), h_[i].end(), 0.0f);
+        std::fill(c_[i].begin(), c_[i].end(), 0.0f);
+    }
+}
+
 void Stream::reset() noexcept {
     headCount_ = 0;
     started_ = false;
@@ -41,6 +60,9 @@ void Stream::reset() noexcept {
     state_ = 0;
     dropped_ = 0;
     samplesIn_ = samplesOut_ = 0;
+    if (noiseFilter_) {
+        noiseFilter_->reset();
+    }
 }
 
 int Stream::push(IChunkModel& model, const float* in, int count, float* out) noexcept {
@@ -82,6 +104,13 @@ int Stream::run(IChunkModel& model, float* out) noexcept {
             return -1;
         }
         state_ ^= 1;
+        if (noiseFilter_) {
+            // Frame j analysed buffer_[j * kHop, j * kHop + kNfft).
+            for (int j = 0; j < k; ++j) {
+                noiseFilter_->process(buffer_.data() + static_cast<std::size_t>(j) * kHop,
+                                      frames_.data() + static_cast<std::size_t>(j) * kNfft, kOutputGain);
+            }
+        }
 
         // Overlap-add the K windowed frames at a 128-sample hop, accumulating the squared window.
         for (int j = 0; j < k; ++j) {

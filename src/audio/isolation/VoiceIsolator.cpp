@@ -45,6 +45,12 @@ constexpr std::uint64_t kFailuresToStop = 3;   // inference errors within kFailu
 constexpr auto kFailureWindow = std::chrono::seconds(30);
 constexpr int kTestFramesPerRun = 8;           // offline voice-sample tests: large chunks, fastest per second of audio
 constexpr std::size_t kAppendGapSamples = voxlock::kSampleRate * 3 / 10; // 0.3 s pause between recording sessions
+constexpr std::size_t kCheckRingCapacity = voxlock::kSampleRate * 2;       // 2 s of isolated output for the checker
+constexpr std::size_t kCheckBlock = 1600;      // 16 kHz samples the checker takes at a time
+constexpr float kGateStep = 1.0f / 320.0f;     // the voice check mutes over 20 ms ...
+constexpr float kGateOpenStep = 1.0f / 80.0f;  // ... and unmutes over 5 ms (keeps the start of a word)
+constexpr int kGateOpen = static_cast<int>(voxlock::VoiceCheck::Gate::Open);
+constexpr int kGateOnSpeech = static_cast<int>(voxlock::VoiceCheck::Gate::OpenOnSpeech);
 
 std::size_t burstSamples48k(int framesPerRun) {
     // One inference releases K hops of 16 kHz audio, i.e. 3 * K * 128 samples at 48 kHz.
@@ -88,7 +94,8 @@ private:
 
 VoiceIsolator::VoiceIsolator()
     : in48_(kWorkerBlock), buf16_(kMaxPush16), out16_(kMaxStreamOutput), out48_(kMaxStreamOutput * 3 + 64),
-      inRing_(kRingCapacity), outRing_(kRingCapacity), recordRing_(kRecordRingCapacity), recordChunk_(kRecordChunk) {
+      inRing_(kRingCapacity), outRing_(kRingCapacity), checkRing_(kCheckRingCapacity), recordRing_(kRecordRingCapacity),
+      recordChunk_(kRecordChunk) {
     down_.configure(kSampleRate, voxlock::kSampleRate, kWorkerBlock, kDownHalfTaps);
     up_.configure(voxlock::kSampleRate, kSampleRate, kMaxStreamOutput, kUpHalfTaps);
 #if !defined(VOICESTUDIO_HAS_VOXLOCK)
@@ -115,8 +122,17 @@ VoiceIsolator::~VoiceIsolator() {
     if (worker_.joinable()) {
         worker_.join();
     }
+    if (checkEvent_ != nullptr) {
+        SetEvent(checkEvent_);
+    }
+    if (checker_.joinable()) {
+        checker_.join();
+    }
     if (wakeEvent_ != nullptr) {
         CloseHandle(wakeEvent_);
+    }
+    if (checkEvent_ != nullptr) {
+        CloseHandle(checkEvent_);
     }
 }
 
@@ -127,7 +143,9 @@ void VoiceIsolator::startThreads() {
         return;
     }
     wakeEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    checkEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     worker_ = std::thread([this] { workerMain(); });
+    checker_ = std::thread([this] { checkerMain(); });
     loader_ = std::thread([this] { loaderMain(); });
 }
 
@@ -229,10 +247,22 @@ void VoiceIsolator::initialize(const std::filesystem::path& runtimeDir, const st
             status_.backend = runtime_->description();
         }
         logInfo("Voice isolation: " + runtime_->description());
+        {
+            std::string speakerError;
+            auto speaker = runtime_->createSpeakerModel(speakerError);
+            if (!speaker) {
+                logWarning("Voice check unavailable (other voices are only reduced by the isolation model): " + speakerError);
+            }
+            std::lock_guard lock(speakerMutex_);
+            speakerModel_ = std::move(speaker);
+        }
         std::error_code ec;
         if (!enrollmentFile_.empty() && std::filesystem::exists(enrollmentFile_, ec)) {
             std::vector<float> voice;
             if (voxlock::loadVoiceSample(enrollmentFile_, voice, error) && prepareVoice(voice, error)) {
+                std::vector<float> recording;
+                std::string ignored;
+                updateSpeakerReference(voxlock::loadVoiceSample(recordingFile(), recording, ignored) ? recording : voice);
                 std::string microphone;
                 std::ifstream in(microphoneFile());
                 std::getline(in, microphone);
@@ -305,6 +335,7 @@ void VoiceIsolator::enroll(std::vector<float> audio16k, std::string microphone, 
             setStatus(before, "Voice enrollment failed: " + error, false);
             return;
         }
+        updateSpeakerReference(audio);
         // Saved: the 3 s the model uses (loads exactly as enrolled) and the whole recording (for adding more).
         if (!enrollmentFile_.empty() && !voxlock::saveVoiceSample(enrollmentFile_, sample, error)) {
             logError("Saving the voice sample failed: " + error);
@@ -435,6 +466,7 @@ void VoiceIsolator::deleteEnrollment() {
         }
         tensors_ = {};
         haveTensors_ = false;
+        updateSpeakerReference({});
         {
             std::lock_guard lock(modelMutex_);
             pendingModel_.reset();
@@ -1089,6 +1121,7 @@ void VoiceIsolator::workerMain() {
     setCurrentThreadName(L"VoiceIsolator worker");
     preferPerformanceCores();
     ScopedMmcss mmcss(L"Pro Audio");
+    ScopedDenormalSuppression denormals; // the resamplers and the noise filter run on muted (zero) output too
     while (!workerQuit_.load(std::memory_order_acquire)) {
         WaitForSingleObject(wakeEvent_, 20);
         if (requestedEpoch_.load(std::memory_order_acquire) != ackedEpoch_.load(std::memory_order_relaxed)) {
@@ -1122,6 +1155,7 @@ void VoiceIsolator::workerReset() {
         k = model_->framesPerRun();
         if (!stream_ || stream_->framesPerRun() != k) {
             stream_ = std::make_unique<voxlock::Stream>(k, kMaxPush16);
+            stream_->setNoiseFilter(!testFactory_); // test models are checked sample by sample
             if (out16_.size() < static_cast<std::size_t>(stream_->maxOutputSamples())) {
                 out16_.resize(static_cast<std::size_t>(stream_->maxOutputSamples()));
                 out48_.resize(out16_.size() * 3 + 64);
@@ -1132,6 +1166,14 @@ void VoiceIsolator::workerReset() {
     }
     down_.reset();
     up_.reset();
+    // A fresh stream starts unmuted; the checker starts judging afresh, and older state resets are void.
+    gateGain_ = 1.0f;
+    gate_.store(kGateOpen, std::memory_order_release);
+    seenStateResets_ = stateResets_.load(std::memory_order_acquire);
+    checkRestarts_.fetch_add(1, std::memory_order_acq_rel);
+    if (checkEvent_ != nullptr) {
+        SetEvent(checkEvent_);
+    }
     workerFailed_.store(false, std::memory_order_release);
     activeFramesPerRun_.store(k, std::memory_order_release);
     ackedEpoch_.store(epoch, std::memory_order_release);
@@ -1152,6 +1194,11 @@ void VoiceIsolator::workerProcess() {
             offset += down_.write(in48_.data() + offset, count - offset);
             std::size_t produced16 = 0;
             while ((produced16 = down_.read(buf16_.data(), buf16_.size())) > 0) {
+                const std::uint32_t resets = stateResets_.load(std::memory_order_acquire);
+                if (resets != seenStateResets_) {
+                    seenStateResets_ = resets;
+                    stream_->resetState(); // the voice check found someone else: forget whom the model followed
+                }
                 const int isolated = stream_->push(*model_, buf16_.data(), static_cast<int>(produced16), out16_.data());
                 bool finite = isolated >= 0;
                 for (int i = 0; finite && i < isolated; ++i) {
@@ -1165,6 +1212,32 @@ void VoiceIsolator::workerProcess() {
                     workerFailed_.store(true, std::memory_order_release);
                     return;
                 }
+                if (isolated > 0 && checkActive_.load(std::memory_order_relaxed)) {
+                    // The checker hears the output before the gate, so it notices when the user is back.
+                    checkRing_.tryPush(out16_.data(), static_cast<std::size_t>(isolated));
+                    SetEvent(checkEvent_);
+                }
+                int gate = gate_.load(std::memory_order_acquire);
+                if (gate == kGateOnSpeech && isolated > 0) {
+                    // Muted until someone speaks after a pause: open on this chunk, not after the checker has
+                    // seen it, so the first syllable passes. The checker then judges the new speech.
+                    double energy = 0.0;
+                    for (int i = 0; i < isolated; ++i) {
+                        energy += static_cast<double>(out16_[static_cast<std::size_t>(i)]) * out16_[static_cast<std::size_t>(i)];
+                    }
+                    if (energy / isolated > speechLevel_.load(std::memory_order_relaxed) &&
+                        gate_.compare_exchange_strong(gate, kGateOpen, std::memory_order_acq_rel)) {
+                        gate = kGateOpen;
+                    }
+                }
+                const float target = gate == kGateOpen ? 1.0f : 0.0f;
+                if (gateGain_ != target || target == 0.0f) {
+                    for (int i = 0; i < isolated; ++i) {
+                        gateGain_ = target > gateGain_ ? std::min(target, gateGain_ + kGateOpenStep)
+                                                       : std::max(target, gateGain_ - kGateStep);
+                        out16_[static_cast<std::size_t>(i)] *= gateGain_;
+                    }
+                }
                 std::size_t upOffset = 0;
                 const auto total = static_cast<std::size_t>(isolated);
                 while (upOffset < total) {
@@ -1174,6 +1247,106 @@ void VoiceIsolator::workerProcess() {
                         metrics_.overruns.fetch_add(1, std::memory_order_relaxed);
                     }
                 }
+            }
+        }
+    }
+}
+
+// ---- Voice check thread ------------------------------------------------------------------------------
+
+void VoiceIsolator::updateSpeakerReference(const std::vector<float>& recording16k) {
+    std::lock_guard lock(speakerMutex_);
+    speakerReference_.clear();
+    if (speakerModel_ && !recording16k.empty()) {
+        const auto start = std::chrono::steady_clock::now();
+        speakerReference_ = voxlock::referenceEmbedding(*speakerModel_, recording16k);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+        if (speakerReference_.empty()) {
+            logWarning("Voice check: the recording has too little speech for a reference; other voices are not muted");
+        } else {
+            logInfo("Voice check: reference built from " + std::to_string(recording16k.size() / voxlock::kSampleRate) +
+                    " s of recording in " + std::to_string(ms) + " ms");
+        }
+    }
+    const bool active = !speakerReference_.empty();
+    checkActive_.store(active, std::memory_order_release);
+    {
+        std::lock_guard statusLock(statusMutex_);
+        status_.voiceCheck = active;
+    }
+    statusRevision_.fetch_add(1, std::memory_order_acq_rel);
+    if (checkEvent_ != nullptr) {
+        SetEvent(checkEvent_);
+    }
+}
+
+void VoiceIsolator::checkerMain() {
+    setCurrentThreadName(L"VoiceIsolator voice check");
+    preferEfficiencyCores(); // not real-time: keep it off the cores the isolation runs on
+    std::vector<float> block(kCheckBlock);
+    std::vector<float> embedding;
+    while (!workerQuit_.load(std::memory_order_acquire)) {
+        WaitForSingleObject(checkEvent_, 100);
+        const std::uint32_t restarts = checkRestarts_.load(std::memory_order_acquire);
+        if (restarts != seenCheckRestarts_) {
+            seenCheckRestarts_ = restarts;
+            voiceCheck_.reset();
+            publishedGate_ = voxlock::VoiceCheck::Gate::Open; // the worker opened the gate
+            checkRing_.skip(checkRing_.available());
+            metrics_.voiceGateOpen.store(true, std::memory_order_relaxed);
+        }
+        if (!checkActive_.load(std::memory_order_acquire)) {
+            checkRing_.skip(checkRing_.available());
+            if (!voiceCheck_.open()) {
+                voiceCheck_.reset();
+            }
+            publishedGate_ = voxlock::VoiceCheck::Gate::Open;
+            gate_.store(kGateOpen, std::memory_order_release);
+            metrics_.voiceGateOpen.store(true, std::memory_order_relaxed);
+            continue;
+        }
+        for (;;) {
+            const std::size_t n = checkRing_.pop(block.data(), block.size());
+            if (n == 0) {
+                break;
+            }
+            bool reset = false;
+            if (voiceCheck_.feed(block.data(), n) == voxlock::VoiceCheck::Action::Check) {
+                bool ok = false;
+                float score = 0.0f;
+                {
+                    std::lock_guard lock(speakerMutex_);
+                    const std::vector<float>& speech = voiceCheck_.speech();
+                    if (speakerModel_ && !speakerReference_.empty() &&
+                        speakerModel_->embed(speech.data(), speech.size(), embedding)) {
+                        score = voxlock::similarity(embedding, speakerReference_);
+                        ok = true;
+                    }
+                }
+                if (ok) {
+                    logDebug("Voice check: similarity " + std::to_string(score).substr(0, 5) + " over " +
+                             std::to_string(voiceCheck_.speech().size() / 160) + "0 ms of speech");
+                    const bool wasOpen = voiceCheck_.open();
+                    reset = voiceCheck_.decide(score);
+                    metrics_.voiceCheckScore.store(score, std::memory_order_relaxed);
+                    if (wasOpen && !voiceCheck_.open()) {
+                        metrics_.voiceCheckMutes.fetch_add(1, std::memory_order_relaxed);
+                        logInfo("Voice check: another voice muted (similarity " + std::to_string(score).substr(0, 5) + ")");
+                    } else if (!wasOpen && voiceCheck_.open()) {
+                        logInfo("Voice check: your voice again (similarity " + std::to_string(score).substr(0, 5) + ")");
+                    }
+                }
+            }
+            reset = voiceCheck_.resetDue() || reset;
+            speechLevel_.store(voiceCheck_.speechLevel(), std::memory_order_relaxed);
+            // Only on a change: the worker may have opened an OpenOnSpeech gate by itself.
+            if (voiceCheck_.gate() != publishedGate_) {
+                publishedGate_ = voiceCheck_.gate();
+                gate_.store(static_cast<int>(publishedGate_), std::memory_order_release);
+            }
+            metrics_.voiceGateOpen.store(voiceCheck_.open(), std::memory_order_relaxed);
+            if (reset) {
+                stateResets_.fetch_add(1, std::memory_order_acq_rel);
             }
         }
     }

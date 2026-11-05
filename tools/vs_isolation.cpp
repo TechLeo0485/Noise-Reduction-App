@@ -15,6 +15,10 @@
 //                     --set gateUseVad=0 --set gateThresholdDb=-36); repeatable
 //   --spin 0|1        ONNX Runtime intra-op thread spinning (offline mode; the app uses 0)
 //   --log file        write the application log (e.g. which voice sample was chosen) to `file`
+//   --debug           include debug messages in the log (e.g. every voice-check similarity)
+//
+//   vs_isolation --similarity --enroll me.wav --in other.wav
+//       Voice check: similarity of each 1.5 s piece of `other.wav` to the voice in `me.wav` (CAM++).
 //   --processor X     real-time run: where isolation runs - auto (measure CPU and GPUs, default), cpu, or a GPU id
 //                     ("gpu:10de-1c82-0"; printed at the start)
 //
@@ -111,6 +115,31 @@ public:
 private:
     std::unique_ptr<voxlock::IChunkModel> inner_;
 };
+
+int runSimilarity(const std::vector<float>& voice16k, const std::vector<float>& input16k) {
+    std::string error;
+    const std::filesystem::path dir = exeDirectory();
+    auto runtime = voxlock::Runtime::create(dir, dir / L"models" / L"voxlock", error);
+    auto model = runtime ? runtime->createSpeakerModel(error) : nullptr;
+    if (!model) {
+        std::fprintf(stderr, "speaker model: %s\n", error.c_str());
+        return 1;
+    }
+    const std::vector<float> reference = voxlock::referenceEmbedding(*model, voice16k);
+    if (reference.empty()) {
+        std::fprintf(stderr, "the voice recording has too little speech\n");
+        return 1;
+    }
+    constexpr std::size_t kPiece = voxlock::kSampleRate * 3 / 2;
+    std::vector<float> embedding;
+    for (std::size_t i = 0; i + kPiece <= input16k.size(); i += kPiece) {
+        if (model->embed(input16k.data() + i, kPiece, embedding)) {
+            std::printf("%6.1f s  %.3f\n", static_cast<double>(i) / voxlock::kSampleRate,
+                        static_cast<double>(voxlock::similarity(embedding, reference)));
+        }
+    }
+    return 0;
+}
 
 int runOffline(const std::vector<float>& voice16k, const std::vector<float>& input16k, const std::string& outPath, int k,
                bool spin) {
@@ -231,6 +260,7 @@ int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& in
     timeBeginPeriod(1);
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     ScopedMmcss mmcss(L"Pro Audio"); // like the WASAPI capture thread
+    ScopedDenormalSuppression denormals; // ditto: muted output must not leave the filters in denormals
 
     constexpr std::size_t n = VoiceProcessingChain::kFrameSize;
     const std::size_t frames = input48k.size() / n;
@@ -307,6 +337,9 @@ int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& in
                 percentile(processUs, 1.0));
     std::printf("process CPU: %.0f%% of one core (%.1f%% of the 20 logical processors)\n", 100.0 * cpu / wallSec,
                 100.0 * cpu / wallSec / 20.0);
+    std::printf("voice check: %s, other voices muted %llu times, last similarity %.2f\n",
+                isolator.status().voiceCheck ? "active" : "off", static_cast<unsigned long long>(m.voiceCheckMutes.load()),
+                static_cast<double>(m.voiceCheckScore.load()));
     tools::writeWavFloatMono(outPath, out, VoiceProcessingChain::kSampleRate);
     return 0;
 }
@@ -316,6 +349,7 @@ int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& in
 int main(int argc, char** argv) {
     std::string enrollPath, inPath, outPath;
     bool offline = false;
+    bool similarity = false;
     bool isolatorOnly = false;
     bool spin = false;
     std::vector<std::pair<std::string, float>> overrides;
@@ -328,10 +362,12 @@ int main(int argc, char** argv) {
         else if (a == "--in") inPath = next();
         else if (a == "--out") outPath = next();
         else if (a == "--offline") offline = true;
+        else if (a == "--similarity") similarity = true;
         else if (a == "--isolator-only") isolatorOnly = true;
         else if (a == "--k") k = std::max(1, std::atoi(next().c_str()));
         else if (a == "--spin") spin = next() != "0";
         else if (a == "--log") Logger::instance().open(next());
+        else if (a == "--debug") Logger::instance().setLevel(LogLevel::Debug);
         else if (a == "--processor") processor = next();
         else if (a == "--set") {
             const std::string kv = next();
@@ -339,15 +375,18 @@ int main(int argc, char** argv) {
             if (eq != std::string::npos) overrides.emplace_back(kv.substr(0, eq), static_cast<float>(std::atof(kv.c_str() + eq + 1)));
         }
     }
-    if (enrollPath.empty() || inPath.empty() || outPath.empty()) {
+    if (enrollPath.empty() || inPath.empty() || (outPath.empty() && !similarity)) {
         std::fprintf(stderr, "usage: vs_isolation [--offline [--k K]] [--isolator-only] --enroll me.wav --in mix.wav --out out.wav\n");
         return 2;
     }
     std::vector<float> voice16k;
     std::vector<float> input;
     if (!load(enrollPath, voxlock::kSampleRate, voice16k) ||
-        !load(inPath, offline ? voxlock::kSampleRate : VoiceProcessingChain::kSampleRate, input)) {
+        !load(inPath, offline || similarity ? voxlock::kSampleRate : VoiceProcessingChain::kSampleRate, input)) {
         return 1;
+    }
+    if (similarity) {
+        return runSimilarity(voice16k, input);
     }
     return offline ? runOffline(voice16k, input, outPath, k, spin) : runRealtime(voice16k, input, outPath, isolatorOnly, overrides, processor);
 }

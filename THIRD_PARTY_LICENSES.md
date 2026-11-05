@@ -9,6 +9,7 @@
 | ONNX Runtime (Microsoft), DirectML build (NuGet `Microsoft.ML.OnnxRuntime.DirectML`) | 1.24.4 | MIT | Strict voice isolation inference on CPU or GPU | Yes, `onnxruntime.dll` (loaded at runtime) |
 | DirectML (Microsoft), NuGet `Microsoft.AI.DirectML` | 1.15.4 | Microsoft DirectML license (redistributable inside applications using ML frameworks on Windows) | GPU inference (NVIDIA, AMD, Intel) | Yes, `DirectML.dll` |
 | VoxLock (Arbaz Siddiqui), models `enroll.onnx` + `chunk_int8_full.onnx`, revision a50f4e1d | 1.x | Apache-2.0 (weights and code); model code derived from WeSep (Apache-2.0) | Strict voice isolation | Yes, `models/voxlock/`. `src/ai/voxlock/VoxLockStream.cpp` and `VoxLockEnrollment.cpp` port its streaming code |
+| CAM++ speaker verification (Alibaba 3D-Speaker, `iic/speech_campplus_sv_en_voxceleb_16k`), ONNX export from k2-fsa/sherpa-onnx release `speaker-recongition-models` | 2023 | Apache-2.0 (3D-Speaker model and code; sherpa-onnx export scripts Apache-2.0). Trained on VoxCeleb (CC BY 4.0), which is not redistributed | Voice check: mutes other voices in strict isolation | Yes, `models/voxlock/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx` |
 | SysVAD virtual audio driver sample (Microsoft, Windows-driver-samples, commit bb68ed5e) | 2026-10 | MIT | VoiceStudio Virtual Microphone driver (`driver/`, modified) | Yes, `driver/vsvirtualmic.sys` (optional installer task) |
 | Windows Driver Kit (Microsoft), NuGet `Microsoft.Windows.WDK.x64` | 10.0.28000.2526 | WDK license | Building the driver | No (build tool only) |
 | Microsoft Windows SDK (WASAPI, Core Audio, DXGI, AVRT, DbgHelp) | system | Windows SDK license | Platform APIs | System components |
@@ -25,6 +26,8 @@ Before release, copy the full license texts into `licenses/` in the installer:
 - SysVAD: `driver/LICENSE.sysvad.txt` (MIT, Microsoft Corporation).
 - VoxLock: `LICENSE` (Apache-2.0) and `NOTICE` from https://huggingface.co/arbazsiddiqui/voxlock
   ("VoxLock, Copyright 2026 Arbaz Siddiqui"; wesep/ from the REAL-TSE WeSep baseline, Apache-2.0).
+- CAM++: the Apache-2.0 `LICENSE` of https://github.com/modelscope/3D-Speaker (and of k2-fsa/sherpa-onnx,
+  whose release hosts the ONNX export).
 
 No other models or datasets are included. Any further ONNX model must have its license
 reviewed and listed here before it is added (see Phase 3 in `docs/implementation-checklist.md`).

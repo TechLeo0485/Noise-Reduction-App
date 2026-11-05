@@ -3,10 +3,11 @@
 | Files | Used by | Source |
 |---|---|---|
 | `voxlock/enroll.onnx`, `voxlock/chunk_int8_full.onnx` | Strict voice isolation | [VoxLock](https://huggingface.co/arbazsiddiqui/voxlock) revision `a50f4e1d`, Apache-2.0 |
+| `voxlock/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx` | Voice check (mutes other voices while you are silent) | [3D-Speaker CAM++](https://github.com/modelscope/3D-Speaker), ONNX export from the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models) release, Apache-2.0 |
 
 RNNoise's weights are compiled into the binary from the RNNoise source archive.
 
-The VoxLock files are not stored in git. CMake downloads them once at configure time (SHA-256
+The model files are not stored in git. CMake downloads them once at configure time (SHA-256
 pinned, see `cmake/Dependencies.cmake`) or copies them from `VOXLOCK_MODEL_DIR`, and the build
 places them in `bin/models/voxlock/`; the installer ships them. They are never downloaded at
 runtime. VoxLock runs at 16 kHz with an 8 ms hop and 24 ms of algorithmic look-ahead; see

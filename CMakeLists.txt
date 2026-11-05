@@ -43,6 +43,7 @@ endif()
 add_library(vs_core STATIC
     src/core/Parameters.cpp
     src/core/RealtimeThread.cpp
+    src/core/Hotkey.cpp
     src/dsp/Biquad.cpp
     src/dsp/NoiseGate.cpp
     src/dsp/Compressor.cpp
@@ -54,6 +55,8 @@ add_library(vs_core STATIC
     src/ai/rnnoise/RnnoiseSuppressor.cpp
     src/ai/voxlock/VoxLockStream.cpp
     src/ai/voxlock/VoxLockEnrollment.cpp
+    src/ai/voxlock/NoiseFloorFilter.cpp
+    src/ai/voxlock/SpeakerCheck.cpp
     src/audio/isolation/VoiceIsolator.cpp
     src/audio/VoiceProcessingChain.cpp
     src/audio/AudioEngine.cpp
@@ -127,6 +130,8 @@ if(VOICESTUDIO_BUILD_APP)
         src/app/EngineController.h
         src/app/TrayIcon.cpp
         src/app/TrayIcon.h
+        src/app/GlobalHotkeys.cpp
+        src/app/GlobalHotkeys.h
         src/app/CrashHandler.cpp
         src/app/VoiceStudio.rc)
     # Window and tray icon (the .rc embeds the same file as the exe icon). Icons come from logo.png via
@@ -167,6 +172,7 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/ProgressBarThin.qml
             ui/components/ScreenPage.qml
             ui/components/StatRow.qml
+            ui/components/HotkeyRow.qml
             ui/components/VsButton.qml
             ui/components/VsComboBox.qml
             ui/components/VsSlider.qml

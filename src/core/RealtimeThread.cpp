@@ -59,13 +59,10 @@ void setCurrentThreadName(const wchar_t* name) noexcept {
     SetThreadDescription(GetCurrentThread(), name);
 }
 
-int preferPerformanceCores() noexcept {
-    THREAD_POWER_THROTTLING_STATE throttling{};
-    throttling.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
-    throttling.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
-    throttling.StateMask = 0; // never EcoQoS
-    SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &throttling, sizeof(throttling));
+namespace {
 
+// Restricts the current thread to the fastest or the slowest core class of a hybrid CPU.
+int selectCoreClass(bool fastest) noexcept {
     ULONG length = 0;
     GetSystemCpuSetInformation(nullptr, 0, &length, GetCurrentProcess(), 0);
     if (length == 0) {
@@ -87,7 +84,7 @@ int preferPerformanceCores() noexcept {
                 if (pass == 0) {
                     best = std::max(best, cls);
                     worst = std::min(worst, cls);
-                } else if (cls == best) {
+                } else if (cls == (fastest ? best : worst)) {
                     ids.push_back(set->CpuSet.Id);
                 }
             }
@@ -100,6 +97,22 @@ int preferPerformanceCores() noexcept {
     return SetThreadSelectedCpuSets(GetCurrentThread(), ids.data(), static_cast<ULONG>(ids.size()))
                ? static_cast<int>(ids.size())
                : 0;
+}
+
+} // namespace
+
+int preferPerformanceCores() noexcept {
+    THREAD_POWER_THROTTLING_STATE throttling{};
+    throttling.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+    throttling.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+    throttling.StateMask = 0; // never EcoQoS
+    SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &throttling, sizeof(throttling));
+    return selectCoreClass(true);
+}
+
+int preferEfficiencyCores() noexcept {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    return selectCoreClass(false);
 }
 
 } // namespace vs

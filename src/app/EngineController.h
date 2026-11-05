@@ -177,6 +177,10 @@ public:
     [[nodiscard]] bool startWithWindows() const;
     void setStartWithWindows(bool enabled);
     [[nodiscard]] QVariantMap setup() const { return setup_; }
+    // System-wide shortcuts, registered by GlobalHotkeys: action "showWindow" or "mute" -> formatHotkey() text
+    // ("" = off). setHotkey() stores the text as given; GlobalHotkeys validates it first.
+    [[nodiscard]] QString hotkey(const QString& action) const;
+    void setHotkey(const QString& action, const QString& text);
     // 0 = Off, 1 = Light, 2 = Balanced, 3 = Strong, -1 = custom (fine-tuned in advanced controls)
     [[nodiscard]] int noiseLevel() const;
 
@@ -225,6 +229,7 @@ public:
 signals:
     void devicesChanged();
     void configChanged();
+    void hotkeysChanged();
     void paramsChanged();
     void presetsChanged();
     void metersChanged();

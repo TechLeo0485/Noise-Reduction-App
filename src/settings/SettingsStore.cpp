@@ -1,5 +1,7 @@
 #include "settings/SettingsStore.h"
 
+#include "core/Hotkey.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -17,6 +19,16 @@ namespace {
 
 QString wide(const std::wstring& s) {
     return QString::fromStdWString(s);
+}
+
+// A stored shortcut in its canonical spelling; the default if the value is missing, unreadable or unusable.
+std::string loadHotkey(const QJsonObject& root, const char* key, const char* fallback) {
+    const QJsonValue v = root.value(QLatin1String(key));
+    Hotkey h;
+    if (!v.isString() || !parseHotkey(v.toString().toStdString(), h) || !hotkeyProblem(h).empty()) {
+        return fallback;
+    }
+    return formatHotkey(h);
 }
 
 double clampedNumber(const QJsonObject& o, const char* key, double fallback, double lo, double hi) {
@@ -107,6 +119,8 @@ QByteArray SettingsStore::toJson(const AppSettings& s) {
         virtualIds.append(wide(id));
     }
     root["virtualDeviceIds"] = virtualIds;
+    root["hotkeyShowWindow"] = QString::fromStdString(s.hotkeyShowWindow);
+    root["hotkeyMute"] = QString::fromStdString(s.hotkeyMute);
 
     QJsonObject custom;
     for (const auto& [name, values] : s.customPresets) {
@@ -186,6 +200,8 @@ bool SettingsStore::fromJson(const QByteArray& json, AppSettings& out, QString* 
     s.closeToTray = root.value("closeToTray").toBool(true);
     s.virtualMicAdopted = root.value("virtualMicAdopted").toBool(false);
     s.processor = root.value("processor").toString(QStringLiteral("auto")).toStdString();
+    s.hotkeyShowWindow = loadHotkey(root, "hotkeyShowWindow", AppSettings::kDefaultHotkeyShowWindow);
+    s.hotkeyMute = loadHotkey(root, "hotkeyMute", AppSettings::kDefaultHotkeyMute);
     if (s.processor.empty() || s.processor.size() > 64) {
         s.processor = "auto";
     }

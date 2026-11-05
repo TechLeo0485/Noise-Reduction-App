@@ -21,6 +21,8 @@ public:
 
     [[nodiscard]] bool available() const { return available_; }
     void showWindow();
+    // Shows the global shortcuts next to the menu entries ("" = none).
+    void setShortcutHints(const QString& open, const QString& mute);
 
 private:
     void refresh();

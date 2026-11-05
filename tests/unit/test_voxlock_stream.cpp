@@ -454,3 +454,64 @@ TEST(OnnxModelPatch, MovesInputsToInitializers) {
     EXPECT_FALSE(bindInputsAsConstants(model, {{"missing", {1}, data.data()}}, out, error));
     EXPECT_FALSE(bindInputsAsConstants(std::vector<char>{'\xff'}, {{"context", {1}, data.data()}}, out, error));
 }
+
+TEST(OnnxModelPatch, SetsAnAttributeOfEveryMatchingNode) {
+    // AttributeProto { name, i, type: INT }
+    const auto intAttribute = [](const std::string& name, std::uint64_t value) {
+        std::vector<char> a;
+        bytesField(a, 1, str(name));
+        varint(a, (3u << 3) | 0);
+        varint(a, value);
+        varint(a, (20u << 3) | 0);
+        varint(a, 2);
+        return a;
+    };
+    // NodeProto { input, op_type, attribute... }
+    const auto node = [&](const std::string& op, const std::vector<std::vector<char>>& attributes) {
+        std::vector<char> n;
+        bytesField(n, 1, str("x"));
+        bytesField(n, 4, str(op));
+        for (const auto& a : attributes) {
+            bytesField(n, 5, a);
+        }
+        return n;
+    };
+    const auto modelWith = [&](std::uint64_t poolValue) {
+        std::vector<char> graph;
+        bytesField(graph, 1, node("AveragePool", {intAttribute("ceil_mode", 1), intAttribute("count_include_pad", poolValue)}));
+        bytesField(graph, 1, node("Relu", {intAttribute("count_include_pad", 1)}));
+        bytesField(graph, 1, node("AveragePool", {intAttribute("ceil_mode", 1)}));
+        bytesField(graph, 11, valueInfo("x"));
+        std::vector<char> model;
+        varint(model, (1u << 3) | 0);
+        varint(model, 8);
+        bytesField(model, 7, graph);
+        return model;
+    };
+
+    std::vector<char> out;
+    std::string error;
+    int changed = -1;
+    ASSERT_TRUE(setNodeAttribute(modelWith(1), "AveragePool", "count_include_pad", 0, out, changed, error)) << error;
+    EXPECT_EQ(changed, 1); // the Relu has a same-named attribute and the second pool has none: both untouched
+    // The attribute keeps its name and type; only the value moves after them.
+    std::vector<char> expected;
+    {
+        std::vector<char> patchedAttribute;
+        bytesField(patchedAttribute, 1, str("count_include_pad"));
+        varint(patchedAttribute, (20u << 3) | 0);
+        varint(patchedAttribute, 2);
+        varint(patchedAttribute, (3u << 3) | 0);
+        varint(patchedAttribute, 0);
+        std::vector<char> graph;
+        bytesField(graph, 1, node("AveragePool", {intAttribute("ceil_mode", 1), patchedAttribute}));
+        bytesField(graph, 1, node("Relu", {intAttribute("count_include_pad", 1)}));
+        bytesField(graph, 1, node("AveragePool", {intAttribute("ceil_mode", 1)}));
+        bytesField(graph, 11, valueInfo("x"));
+        varint(expected, (1u << 3) | 0);
+        varint(expected, 8);
+        bytesField(expected, 7, graph);
+    }
+    EXPECT_EQ(out, expected);
+    EXPECT_FALSE(setNodeAttribute(std::vector<char>{'\xff'}, "AveragePool", "count_include_pad", 0, out, changed, error));
+}

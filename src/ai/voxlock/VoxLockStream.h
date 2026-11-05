@@ -1,9 +1,12 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace vs::voxlock {
+
+class NoiseFloorFilter;
 
 // Constants of the VoxLock streaming contract (voxlock/core.py and export_onnx.py, revision a50f4e1d).
 inline constexpr int kSampleRate = 16000;
@@ -48,8 +51,14 @@ class Stream {
 public:
     // maxPushSamples: largest block passed to one push().
     Stream(int framesPerRun, int maxPushSamples);
+    ~Stream();
 
     void reset() noexcept;
+    // Clears only the LSTM state (the model forgets which voice it was following); the audio keeps flowing.
+    void resetState() noexcept;
+    // Steady-noise removal on every output frame (see NoiseFloorFilter). Off by default. Allocates.
+    void setNoiseFilter(bool enabled);
+    [[nodiscard]] bool noiseFilter() const noexcept { return noiseFilter_ != nullptr; }
 
     // Appends `count` samples (count <= maxPushSamples) and writes the isolated samples that are ready to
     // `out`, which must hold maxOutputSamples(). Returns the number written, or -1 if the model failed
@@ -79,6 +88,7 @@ private:
     std::vector<float> c_[2];
     int state_ = 0;                // which of h_/c_ holds the current LSTM state
     int dropped_ = 0;              // leading padded samples still to drop from the output
+    std::unique_ptr<NoiseFloorFilter> noiseFilter_;
     long long samplesIn_ = 0;
     long long samplesOut_ = 0;
 };
