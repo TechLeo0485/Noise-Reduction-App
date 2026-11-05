@@ -1,0 +1,112 @@
+# Builds VoiceStudio and its installer on GitHub, and publishes a release for every version tag.
+#
+#   git tag v1.0.1 && git push origin v1.0.1
+#     -> builds, runs the unit tests, makes dist/VoiceStudio-1.0.1-setup.exe and publishes the release
+#        "VoiceStudio 1.0.1" with the installer attached. The in-app updater (src/update/ReleaseInfo.h) offers it to
+#        every installed copy. The release text comes from release-notes/v1.0.1.md (shown in the app's update and
+#        "what's new" dialogs); without that file GitHub lists the commits instead.
+#
+#   Actions -> Release -> Run workflow (no tag): the same build, the installer is only kept as a run artifact.
+#
+# See docs/releasing.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release and upload the installer
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022 # Visual Studio 2022 with MSVC 14.44, as setup's runtime check expects
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'VERSION (\d+\.\d+\.\d+)').Matches[0].Groups[1].Value
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne "v$v") {
+            throw "Tag ${{ github.ref_name }} does not match VERSION $v in CMakeLists.txt. Set VERSION $($("${{ github.ref_name }}").TrimStart('v')) there, commit, and tag again."
+          }
+          "VERSION=$v" >> $env:GITHUB_ENV
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building VoiceStudio $v"
+
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      # The VB-CABLE driver pack and the VoxLock / CAM++ models (the downloads from smaller sites). Both are checked
+      # against their pinned SHA-256 (scripts/package.ps1, cmake/Dependencies.cmake), so a cached copy is safe.
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps/vbcable/*.zip
+            build/ninja-release/_deps/voxlock-models
+          key: downloads-${{ hashFiles('cmake/Dependencies.cmake', 'scripts/package.ps1') }}
+
+      # Optional: the VoiceStudio Virtual Microphone. Its signed package is built on a PC with the WDK
+      # (scripts/build-driver.ps1); commit those files to installer/driver-package to include it in setup.
+      - name: Use the virtual microphone package, if committed
+        shell: pwsh
+        run: |
+          if (Test-Path installer/driver-package/vsvirtualmic.inf) {
+            New-Item -ItemType Directory -Force build | Out-Null
+            Copy-Item -Recurse -Force installer/driver-package build/driver-package
+            Write-Host "Including the VoiceStudio Virtual Microphone"
+          } else {
+            Write-Host "No installer/driver-package: setup offers VB-CABLE only"
+          }
+
+      - name: Build and test
+        shell: pwsh
+        run: |
+          $env:QTDIR = $env:QT_ROOT_DIR
+          ./scripts/build.ps1 -Config Release
+
+      - name: Install Inno Setup if missing
+        shell: pwsh
+        run: |
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ }
+          if (-not $iscc) { choco install innosetup -y --no-progress }
+
+      - name: Make the installer
+        shell: pwsh
+        run: |
+          $env:QTDIR = $env:QT_ROOT_DIR
+          ./scripts/package.ps1 -SkipBuild
+          if (-not (Test-Path "dist/VoiceStudio-$env:VERSION-setup.exe")) { throw "dist/VoiceStudio-$env:VERSION-setup.exe was not made" }
+
+      - name: Keep the installer with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceStudio-${{ steps.version.outputs.version }}-setup
+          path: dist/VoiceStudio-${{ steps.version.outputs.version }}-setup.exe
+          retention-days: 14
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $notes = "release-notes/$tag.md"
+          $notesArgs = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
+          gh release create $tag "dist/VoiceStudio-$env:VERSION-setup.exe" --title "VoiceStudio $env:VERSION" --verify-tag @notesArgs

@@ -4,10 +4,37 @@ VoiceStudio updates itself from the GitHub releases of
 [TechLeo0485/Noise-Reduction-App](https://github.com/TechLeo0485/Noise-Reduction-App/releases)
 (`kUpdateRepository` in `src/update/ReleaseInfo.h`).
 
-## Steps
+Anyone can download the newest installer from
+<https://github.com/TechLeo0485/Noise-Reduction-App/releases/latest>.
 
-1. Raise the version in `CMakeLists.txt` (`project(VoiceStudio VERSION 1.0.0 ...)`). The app only offers a release
+## Steps (GitHub builds it)
+
+`.github/workflows/release.yml` builds, tests and packages VoiceStudio on GitHub's Windows machines and
+publishes the release when a version tag is pushed:
+
+1. Raise the version in `CMakeLists.txt` (`project(VoiceStudio VERSION 1.0.1 ...)`). The app only offers a release
    whose version is **higher** than the one it runs, compared number by number (0.10.0 > 0.9.0).
+2. Write `release-notes/v1.0.1.md`: what changed, for users, in Markdown. The app shows exactly this text in
+   "VoiceStudio X is available" and, after the update, in "VoiceStudio is updated to X".
+3. Commit, push, then tag and push the tag:
+
+   ```powershell
+   git tag v1.0.1
+   git push origin v1.0.1
+   ```
+
+4. GitHub → **Actions → Release** shows the build (about 20-30 minutes). When it is green, the release
+   "VoiceStudio 1.0.1" exists with `VoiceStudio-1.0.1-setup.exe` attached, and installed copies offer it.
+
+The workflow stops before building if the tag does not match the version in CMakeLists.txt, and nothing is
+published if a unit test fails. **Actions → Release → Run workflow** makes a test installer without a release
+(download it from the run's artifacts). The VoiceStudio Virtual Microphone driver is only included when its
+signed package is committed in `installer/driver-package/` (from `build/driver-package/` after
+`scripts\build-driver.ps1`); otherwise setup offers VB-CABLE.
+
+## Steps (by hand, without GitHub Actions)
+
+1. Raise the version in `CMakeLists.txt`, as above.
 2. Build the installer: `scripts\package.ps1` (or `-SkipBuild` after a Release build). Result:
    `dist\VoiceStudio-<version>-setup.exe`.
 3. On GitHub: **Releases → Draft a new release**
