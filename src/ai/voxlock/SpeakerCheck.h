@@ -47,12 +47,23 @@ class VoiceCheck {
 public:
     struct Settings {
         float closeBelow = 0.15f;    // similarity under which the voice is someone else's ...
-        double closeSeconds = 1.5;   // ... judged on this much recent speech (reliable: closing mutes the user)
+        double closeSeconds = 0.8;   // ... judged on this much recent speech. Longer windows are a little more
+                                     // reliable, but still hold the user's last words when someone else starts
+                                     // talking, so that voice passed for ~1.5 s (CAM++ on 0.8 s: the user ~0.6,
+                                     // another voice ~0.0)
         float openAbove = 0.22f;     // similarity over which it is the user again ...
         double openSeconds = 0.8;    // ... judged on this much (talking over the other voice: muted meanwhile)
         double pauseSeconds = 0.3;   // while muted, a pause this long ends the other voice's turn; the next
                                      // speech passes at once ...
-        double trialSeconds = 0.4;   // ... and is muted again if this much of it is below closeBelow
+        double trialSeconds = 0.4;   // ... and is muted again if this much of it is below closeBelow; if it is
+                                     // not clearly the user (under openAbove) it is judged again on openSeconds.
+                                     // Once open, it is checked every checkEvery on all of its speech (at least
+                                     // openSeconds) until closeSeconds of it is there.
+        double pauseStep = 0.3;      // each new speech after a pause that turned out to be the other voice again
+        int maxStrikes = 3;          // makes the pause that ends a turn this much longer (up to maxStrikes times),
+                                     // so someone talking with ordinary pauses between phrases does not pass
+                                     // the start of every phrase
+        double forgetSeconds = 3.0;  // silence this long forgets those strikes (the conversation moved on)
         double checkEvery = 0.3;     // seconds of output between checks
         double minNewSpeech = 0.25;  // a check needs at least this much speech since the previous one
         double maxAge = 4.0;         // speech older than this is not used
@@ -84,13 +95,21 @@ public:
     [[nodiscard]] float speechLevel() const noexcept;
     [[nodiscard]] float lastScore() const noexcept { return lastScore_; }
 
+    // Seconds of pause that currently end the other voice's turn (grows with strikes).
+    [[nodiscard]] double pauseNeeded() const noexcept { return s_.pauseSeconds + strikes_ * s_.pauseStep; }
+
 private:
     static constexpr int kBlock = 160; // 10 ms
+    void mute() noexcept;
     // Muted -> (pause) -> Armed -> (speech) -> Trial -> Open or Muted.
     enum class State { Open, Muted, Armed, Trial };
     Settings s_;
     State state_ = State::Open;
     bool resetPending_ = false;
+    int strikes_ = 0;                   // trials in a row that were the other voice (longer pause needed)
+    bool longTrial_ = false;            // the quick trial was ambiguous: judged again on openSeconds
+    bool probation_ = false;            // open after a trial: checked on shorter windows until closeSeconds
+    bool asked_ = false;                // a trial check was handed out in this feed() call
     long long silent_ = 0;              // samples since the last speech block
     float lastScore_ = 1.0f;
     float peakDb_ = -60.0f;

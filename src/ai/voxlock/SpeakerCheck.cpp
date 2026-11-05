@@ -210,6 +210,10 @@ VoiceCheck::VoiceCheck(const Settings& settings) : s_(settings) {
 void VoiceCheck::reset() noexcept {
     state_ = State::Open;
     resetPending_ = false;
+    strikes_ = 0;
+    longTrial_ = false;
+    probation_ = false;
+    asked_ = false;
     silent_ = 0;
     lastScore_ = 1.0f;
     peakDb_ = -60.0f;
@@ -225,6 +229,7 @@ void VoiceCheck::reset() noexcept {
 
 VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
     Action action = Action::None;
+    asked_ = false; // a trial check not answered by decide() (embedding failed) is asked again
     for (std::size_t i = 0; i < count; ++i) {
         partial_.push_back(out16k[i]);
         if (partial_.size() < static_cast<std::size_t>(kBlock)) {
@@ -249,12 +254,16 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
             }
         } else {
             silent_ += kBlock;
-            if (state_ == State::Muted && silent_ >= static_cast<long long>(s_.pauseSeconds * kSampleRate)) {
+            if (state_ == State::Armed && silent_ >= static_cast<long long>(s_.forgetSeconds * kSampleRate)) {
+                strikes_ = 0;
+            }
+            if (state_ == State::Muted && silent_ >= static_cast<long long>(pauseNeeded() * kSampleRate)) {
                 // The other voice stopped. Whoever speaks next passes at once, judged on their own speech only,
                 // and starts from a fresh model state.
                 state_ = State::Armed;
                 count_ = 0;
                 newSpeech_ = 0;
+                longTrial_ = false;
                 resetPending_ = true;
             }
         }
@@ -262,11 +271,14 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
         time_ += kBlock;
 
         const bool trial = state_ == State::Trial;
+        const auto openNeed = static_cast<std::size_t>(s_.openSeconds * kSampleRate / kBlock);
         const auto need = static_cast<std::size_t>(
-            (trial ? s_.trialSeconds : state_ == State::Open ? s_.closeSeconds : s_.openSeconds) * kSampleRate / kBlock);
+            (trial ? (longTrial_ ? s_.openSeconds : s_.trialSeconds)
+                   : state_ == State::Open ? s_.closeSeconds : s_.openSeconds) * kSampleRate / kBlock);
         if (trial) {
-            // Judged as soon as there is enough: the other voice passes meanwhile.
-            if (newSpeech_ < static_cast<long long>(need) * kBlock) {
+            // Judged as soon as there is enough of the new speech (all of it since the pause): the other voice
+            // passes meanwhile.
+            if (asked_ || count_ < need) {
                 continue;
             }
         } else {
@@ -288,8 +300,20 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
             }
             ++recent;
         }
+        std::size_t take = need;
         if (recent < need) {
-            continue;
+            // Just opened after a pause: judge all the speech since then instead of waiting for closeSeconds
+            // of it, so a misjudged trial does not let the other voice through for a second or two more.
+            if (!(probation_ && state_ == State::Open && recent == count_ && recent >= openNeed)) {
+                continue;
+            }
+            take = recent;
+        } else if (state_ == State::Open) {
+            probation_ = false;
+        }
+        recent = take;
+        if (trial) {
+            asked_ = true;
         }
         window_.clear();
         for (std::size_t k = recent; k > 0; --k) {
@@ -301,15 +325,49 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
     return action;
 }
 
+void VoiceCheck::mute() noexcept {
+    state_ = State::Muted;
+    lastReset_ = time_;
+    longTrial_ = false;
+    probation_ = false;
+}
+
 bool VoiceCheck::decide(float score) {
     lastScore_ = score;
-    if (open() && score < s_.closeBelow) {
-        state_ = State::Muted;
-        lastReset_ = time_;
-        return true;
-    }
-    if (state_ == State::Trial || (state_ == State::Muted && score > s_.openAbove)) {
-        state_ = State::Open;
+    asked_ = false;
+    switch (state_) {
+    case State::Trial:
+        if (score < s_.closeBelow) {
+            // The other voice again after its pause: it needs a longer pause next time.
+            strikes_ = std::min(strikes_ + 1, s_.maxStrikes);
+            mute();
+            return true;
+        }
+        if (score > s_.openAbove || longTrial_) {
+            state_ = State::Open;
+            longTrial_ = false;
+            probation_ = true;
+        } else {
+            longTrial_ = true; // not clearly the user on 0.4 s: judge it again on more speech
+        }
+        return false;
+    case State::Open:
+        if (score < s_.closeBelow) {
+            mute();
+            return true;
+        }
+        if (score > s_.openAbove) {
+            strikes_ = 0; // clearly the user
+        }
+        return false;
+    case State::Muted:
+        if (score > s_.openAbove) {
+            state_ = State::Open;
+            strikes_ = 0;
+        }
+        return false;
+    case State::Armed:
+        return false;
     }
     return false;
 }

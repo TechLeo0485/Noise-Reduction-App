@@ -1,4 +1,4 @@
-#include "ai/voxlock/NoiseFloorFilter.h"
+﻿#include "ai/voxlock/NoiseFloorFilter.h"
 #include "ai/voxlock/SpeakerCheck.h"
 #include "ai/voxlock/VoxLockStream.h"
 
@@ -148,15 +148,15 @@ TEST(SpeakerCheck, MutesAnotherVoiceAndReopensForTheUser) {
     for (int i = 0; i < 50; ++i) {
         EXPECT_EQ(check.feed(silence.data(), silence.size()), VoiceCheck::Action::None);
     }
-    // While open, a check needs 1.5 s of speech.
+    // While open, a check needs 0.8 s of speech.
     int checksAt = -1;
     for (int i = 0; i < 30 && checksAt < 0; ++i) {
         if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
             checksAt = i;
         }
     }
-    ASSERT_GE(checksAt, 14);
-    EXPECT_EQ(check.speech().size(), 16000u * 3 / 2);
+    ASSERT_GE(checksAt, 7);
+    EXPECT_EQ(check.speech().size(), 16000u * 4 / 5);
     EXPECT_FALSE(check.decide(0.3f)); // ambiguous: stays as it is
     EXPECT_TRUE(check.open());
     EXPECT_TRUE(check.decide(0.05f)); // someone else: muted, and the model state is reset
@@ -202,10 +202,13 @@ TEST(SpeakerCheck, MutesAnotherVoiceAndReopensForTheUser) {
     EXPECT_TRUE(check.decide(0.1f));
     EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
 
-    // Next turn: the user. The quick check passes, and from then on the gate is simply open.
-    for (int i = 0; i < 3; ++i) {
+    // That pause was the other voice's: the next turn needs a longer pause (0.6 s).
+    for (int i = 0; i < 5; ++i) {
         check.feed(silence.data(), silence.size());
     }
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    check.feed(silence.data(), silence.size());
+    // Next turn: the user. The quick check passes, and from then on the gate is simply open.
     EXPECT_EQ(check.gate(), VoiceCheck::Gate::OpenOnSpeech);
     for (int i = 0; i < 4; ++i) {
         if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
@@ -223,6 +226,87 @@ TEST(SpeakerCheck, MutesAnotherVoiceAndReopensForTheUser) {
     EXPECT_TRUE(check.open());
 }
 
+TEST(SpeakerCheck, AnotherVoiceWithPausesDoesNotPassEveryPhrase) {
+    VoiceCheck check;
+    std::vector<float> speech(160 * 10);
+    for (std::size_t i = 0; i < speech.size(); ++i) {
+        speech[i] = 0.1f * static_cast<float>(std::sin(test::kTwoPi * 300.0 * static_cast<double>(i) / 16000.0));
+    }
+    const std::vector<float> silence(speech.size(), 0.0f);
+    const auto feedSpeech = [&](int blocks, float score) {
+        int checks = 0;
+        for (int i = 0; i < blocks; ++i) {
+            if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+                check.decide(score);
+                ++checks;
+            }
+        }
+        return checks;
+    };
+    const auto pauseUntilArmed = [&]() {
+        int blocks = 0;
+        while (check.gate() == VoiceCheck::Gate::Muted && blocks < 100) {
+            check.feed(silence.data(), silence.size());
+            ++blocks;
+        }
+        return blocks;
+    };
+    feedSpeech(15, 0.05f);
+    ASSERT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+
+    // The other person keeps talking with pauses: each phrase that passes makes the next pause longer.
+    EXPECT_EQ(pauseUntilArmed(), 3);
+    feedSpeech(4, 0.05f);
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    EXPECT_EQ(pauseUntilArmed(), 6);
+    feedSpeech(4, 0.05f);
+    EXPECT_EQ(pauseUntilArmed(), 9);
+    feedSpeech(4, 0.05f);
+    EXPECT_EQ(pauseUntilArmed(), 12);
+    feedSpeech(4, 0.05f);
+    // ... up to 1.2 s; ordinary 0.3 s pauses between phrases now stay muted.
+    for (int i = 0; i < 3; ++i) {
+        check.feed(silence.data(), silence.size());
+    }
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    // A long silence forgets that.
+    for (int i = 0; i < 45; ++i) {
+        check.feed(silence.data(), silence.size());
+    }
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::OpenOnSpeech);
+    feedSpeech(4, 0.05f);
+    EXPECT_EQ(pauseUntilArmed(), 6); // one strike again (the trial above)
+
+    // An ambiguous quick check is not enough: judged again on 0.8 s, still passing meanwhile.
+    for (int i = 0; i < 4; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
+            EXPECT_FALSE(check.decide(0.18f));
+        }
+    }
+    EXPECT_TRUE(check.open());
+    int checks = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            EXPECT_EQ(check.speech().size(), 16000u * 4 / 5);
+            EXPECT_FALSE(check.decide(0.18f));
+            ++checks;
+        }
+    }
+    EXPECT_EQ(checks, 1);
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
+    // Open now, and checked again every 0.3 s.
+    bool muted = false;
+    for (int i = 0; i < 4 && !muted; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            EXPECT_EQ(check.speech().size(), 16000u * 4 / 5);
+            muted = check.decide(0.05f);
+        }
+    }
+    EXPECT_TRUE(muted);
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+}
+
 TEST(SpeakerCheck, OldSpeechIsNotUsed) {
     VoiceCheck check;
     std::vector<float> speech(160 * 10);
@@ -230,10 +314,10 @@ TEST(SpeakerCheck, OldSpeechIsNotUsed) {
         speech[i] = 0.1f * static_cast<float>(std::sin(test::kTwoPi * 300.0 * static_cast<double>(i) / 16000.0));
     }
     const std::vector<float> silence(speech.size(), 0.0f);
-    // 1 s of speech, a 5 s pause, 1 s of speech: never 1.5 s within the last 4 s.
+    // 0.5 s of speech, a 5 s pause, 0.5 s of speech: never 0.8 s within the last 4 s.
     const std::vector<const std::vector<float>*> parts{&speech, &silence, &speech};
     for (const std::vector<float>* part : parts) {
-        const int blocks = part == &silence ? 50 : 10;
+        const int blocks = part == &silence ? 50 : 5;
         for (int i = 0; i < blocks; ++i) {
             EXPECT_EQ(check.feed(part->data(), part->size()), VoiceCheck::Action::None);
         }
