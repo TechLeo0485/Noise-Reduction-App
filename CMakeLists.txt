@@ -116,12 +116,12 @@ if(VOICESTUDIO_BUILD_APP OR VOICESTUDIO_BUILD_TESTS)
 endif()
 
 if(VOICESTUDIO_BUILD_APP OR VOICESTUDIO_BUILD_TESTS)
-    add_library(vs_settings STATIC src/settings/SettingsStore.cpp)
+    add_library(vs_settings STATIC src/settings/SettingsStore.cpp src/update/ReleaseInfo.cpp)
     target_link_libraries(vs_settings PUBLIC vs_core Qt6::Core)
 endif()
 
 if(VOICESTUDIO_BUILD_APP)
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Widgets Qml Quick QuickControls2)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Widgets Qml Quick QuickControls2 Network)
     qt_standard_project_setup(REQUIRES 6.5)
 
     qt_add_executable(VoiceStudio WIN32
@@ -132,6 +132,8 @@ if(VOICESTUDIO_BUILD_APP)
         src/app/TrayIcon.h
         src/app/GlobalHotkeys.cpp
         src/app/GlobalHotkeys.h
+        src/app/Updater.cpp
+        src/app/Updater.h
         src/app/CrashHandler.cpp
         src/app/VoiceStudio.rc)
     # Window and tray icon (the .rc embeds the same file as the exe icon). Icons come from logo.png via
@@ -173,6 +175,7 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/ScreenPage.qml
             ui/components/StatRow.qml
             ui/components/HotkeyRow.qml
+            ui/components/UpdateDialogs.qml
             ui/components/VsButton.qml
             ui/components/VsComboBox.qml
             ui/components/VsSlider.qml
@@ -187,7 +190,7 @@ if(VOICESTUDIO_BUILD_APP)
             ui/screens/HelpScreen.qml)
 
     target_link_libraries(VoiceStudio PRIVATE
-        vs_core vs_settings Qt6::Gui Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 dbghelp dwmapi)
+        vs_core vs_settings Qt6::Gui Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Network dbghelp dwmapi)
     voicestudio_deploy_voxlock(VoiceStudio)
 
     # Copy the Qt DLLs, plugins and QML modules next to the exe after every build so it runs

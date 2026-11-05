@@ -332,7 +332,8 @@ ScreenPage {
                     color: Theme.textSecondary
                     font.pixelSize: 11
                     text: "Privacy: everything runs on this computer. Nothing is uploaded, there is no account or tracking. "
-                          + "Only the voice you record on the Clean-up page is saved, in its own folder."
+                          + "Only the voice you record on the Clean-up page is saved, in its own folder. The only "
+                          + "connection VoiceStudio makes is the update check with GitHub (below), which you can turn off."
                 }
             }
 
@@ -340,10 +341,46 @@ ScreenPage {
                 Layout.fillHeight: true
                 title: "Keyboard shortcuts"
                 subtitle: "Work everywhere, even while you are in a game or call and VoiceStudio is hidden. Click the keys to change them."
-                icon: ""
+                icon: "\uE765"
                 Repeater {
                     model: hotkeys.items
                     HotkeyRow {}
+                }
+            }
+
+            Card {
+                Layout.fillHeight: true
+                title: "Updates"
+                subtitle: "You have VoiceStudio " + updater.currentVersion
+                icon: "\uE895"
+                VsSwitch {
+                    label: "Check for updates when VoiceStudio starts"
+                    description: "Asks before anything is downloaded. Your settings and recorded voice are kept."
+                    checked: updater.checkAtStart
+                    onToggled: (value) => updater.checkAtStart = value
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+                    VsButton {
+                        text: updater.state === "available" ? "Update to " + updater.latestVersion : "Check now"
+                        primary: updater.state === "available"
+                        enabled: updater.state !== "checking" && updater.state !== "downloading" && updater.state !== "installing"
+                        onClicked: updater.state === "available" ? updater.showPrompt() : updater.checkNow()
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                        color: updater.state === "error" ? Theme.warning : Theme.textSecondary
+                        text: updater.state === "checking" ? "Checking..."
+                              : updater.state === "upToDate" ? "You have the newest version."
+                              : updater.state === "available" ? "Version " + updater.latestVersion + " is ready to install."
+                              : updater.state === "downloading" ? "Downloading " + Math.round(updater.progress * 100) + " %"
+                              : updater.state === "installing" ? "Installing..."
+                              : updater.state === "error" ? updater.error
+                              : ""
+                    }
                 }
             }
 

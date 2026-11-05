@@ -22,6 +22,10 @@ TEST(SettingsStore, JsonRoundTrip) {
     s.advancedUi = true;
     s.hotkeyShowWindow = "Win+F9";
     s.hotkeyMute = ""; // off
+    s.checkForUpdates = false;
+    s.skippedVersion = "1.0.0";
+    s.lastRunVersion = "0.9.0";
+    s.updateNotes = "- Hotkeys";
 
     AppSettings loaded;
     ASSERT_TRUE(SettingsStore::fromJson(SettingsStore::toJson(s), loaded));
@@ -39,6 +43,12 @@ TEST(SettingsStore, JsonRoundTrip) {
     EXPECT_FLOAT_EQ(loaded.customPresets["Mine"]["trebleDb"], -1.0f);
     EXPECT_EQ(loaded.hotkeyShowWindow, "Win+F9");
     EXPECT_EQ(loaded.hotkeyMute, "");
+    EXPECT_FALSE(loaded.checkForUpdates);
+    EXPECT_EQ(loaded.skippedVersion, "1.0.0");
+    EXPECT_EQ(loaded.lastRunVersion, "0.9.0");
+    EXPECT_EQ(loaded.updateNotes, "- Hotkeys");
+    EXPECT_TRUE(AppSettings{}.checkForUpdates);
+    EXPECT_EQ(AppSettings{}.lastRunVersion, ""); // fresh install: nothing to announce
 }
 
 TEST(SettingsStore, ValuesAreValidatedOnLoad) {
@@ -60,6 +70,7 @@ TEST(SettingsStore, ValuesAreValidatedOnLoad) {
     EXPECT_EQ(s.effectOrder, defaultEffectOrder()); // duplicate entries rejected
     EXPECT_EQ(s.hotkeyShowWindow, AppSettings::kDefaultHotkeyShowWindow); // a plain key would block typing
     EXPECT_EQ(s.hotkeyMute, "Alt+Shift+F5");                             // stored in its canonical spelling
+    EXPECT_EQ(s.lastRunVersion, "0.0.0"); // settings from before updates existed: an older version ran
 }
 
 TEST(SettingsStore, RejectsCorruptOrFutureFiles) {

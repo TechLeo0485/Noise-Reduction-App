@@ -23,6 +23,8 @@ public:
     void showWindow();
     // Shows the global shortcuts next to the menu entries ("" = none).
     void setShortcutHints(const QString& open, const QString& mute);
+    // A notification next to the tray icon; clicking it opens the window.
+    void notify(const QString& title, const QString& text);
 
 private:
     void refresh();

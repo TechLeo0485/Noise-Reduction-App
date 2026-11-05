@@ -2,6 +2,7 @@
 #include "app/EngineController.h"
 #include "app/GlobalHotkeys.h"
 #include "app/TrayIcon.h"
+#include "app/Updater.h"
 #include "diagnostics/Logger.h"
 
 #include <QApplication>
@@ -104,9 +105,11 @@ int main(int argc, char* argv[]) {
     {
         vs::EngineController controller;
         vs::GlobalHotkeys hotkeys(controller);
+        vs::Updater updater(controller);
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty(QStringLiteral("backend"), &controller);
         engine.rootContext()->setContextProperty(QStringLiteral("hotkeys"), &hotkeys);
+        engine.rootContext()->setContextProperty(QStringLiteral("updater"), &updater);
         QObject::connect(
             &engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(-1); },
             Qt::QueuedConnection);
@@ -145,6 +148,14 @@ int main(int argc, char* argv[]) {
             if (!startMinimized || !tray.available()) {
                 tray.showWindow();
             }
+            // Started into the tray, the update dialog would wait unseen: say so in a notification (click opens it).
+            QObject::connect(&updater, &vs::Updater::updateFound, &tray, [&tray, window](const QString& version) {
+                if (!window->isVisible()) {
+                    tray.notify(QStringLiteral("VoiceStudio %1 is available").arg(version),
+                                QStringLiteral("Click to see what's new and update."));
+                }
+            });
+            updater.start();
             QWinEventNotifier activation(activateEvent);
             QObject::connect(&activation, &QWinEventNotifier::activated, &tray, [&tray] { tray.showWindow(); });
             QWinEventNotifier quitRequest(quitEvent);

@@ -121,6 +121,11 @@ QByteArray SettingsStore::toJson(const AppSettings& s) {
     root["virtualDeviceIds"] = virtualIds;
     root["hotkeyShowWindow"] = QString::fromStdString(s.hotkeyShowWindow);
     root["hotkeyMute"] = QString::fromStdString(s.hotkeyMute);
+    root["checkForUpdates"] = s.checkForUpdates;
+    root["skippedVersion"] = QString::fromStdString(s.skippedVersion);
+    root["lastRunVersion"] = QString::fromStdString(s.lastRunVersion);
+    root["updateNotesVersion"] = QString::fromStdString(s.updateNotesVersion);
+    root["updateNotes"] = QString::fromStdString(s.updateNotes);
 
     QJsonObject custom;
     for (const auto& [name, values] : s.customPresets) {
@@ -202,6 +207,12 @@ bool SettingsStore::fromJson(const QByteArray& json, AppSettings& out, QString* 
     s.processor = root.value("processor").toString(QStringLiteral("auto")).toStdString();
     s.hotkeyShowWindow = loadHotkey(root, "hotkeyShowWindow", AppSettings::kDefaultHotkeyShowWindow);
     s.hotkeyMute = loadHotkey(root, "hotkeyMute", AppSettings::kDefaultHotkeyMute);
+    s.checkForUpdates = root.value("checkForUpdates").toBool(true);
+    s.skippedVersion = root.value("skippedVersion").toString().left(32).toStdString();
+    // Settings written before VoiceStudio knew this field come from a version that is older than this one.
+    s.lastRunVersion = root.value("lastRunVersion").toString(QStringLiteral("0.0.0")).left(32).toStdString();
+    s.updateNotesVersion = root.value("updateNotesVersion").toString().left(32).toStdString();
+    s.updateNotes = root.value("updateNotes").toString().left(64 * 1024).toStdString();
     if (s.processor.empty() || s.processor.size() > 64) {
         s.processor = "auto";
     }

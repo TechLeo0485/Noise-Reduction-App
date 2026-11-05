@@ -99,6 +99,12 @@ void TrayIcon::refresh() {
     tray_.setToolTip(QStringLiteral("VoiceStudio - %1").arg(state));
 }
 
+void TrayIcon::notify(const QString& title, const QString& text) {
+    if (available_) {
+        tray_.showMessage(title, text, QApplication::windowIcon(), 8000);
+    }
+}
+
 void TrayIcon::notifyHidden() {
     if (!available_ || notified_) {
         return;

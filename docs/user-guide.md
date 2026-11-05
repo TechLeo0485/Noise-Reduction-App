@@ -175,6 +175,19 @@ Use Ctrl, Alt or Win together with a letter, number or F-key, so the keys keep w
 **Off** turns a shortcut off; **Default** brings the original keys back. If another app already uses the keys,
 the card says so - choose other keys. The tray menu shows the current shortcuts next to its entries.
 
+### Updates
+
+A few seconds after it starts, VoiceStudio checks GitHub for a newer version. If there is one, it asks you first
+and shows what's new - choose **Update now**, **Later**, or **Skip this version**. (If VoiceStudio started hidden in
+the tray, a notification tells you; click it.)
+
+**Update now** downloads the installer, checks that it is exactly the file published on GitHub, and installs it.
+Windows asks for permission; VoiceStudio closes for a moment and starts again by itself. Your settings, shortcuts
+and recorded voice are kept. After the update, VoiceStudio shows what changed.
+
+**Setup → Updates**: check by hand with **Check now**, or turn the automatic check off. The check is the only
+connection VoiceStudio makes to the internet.
+
 ---
 
 ## 7. Troubleshooting

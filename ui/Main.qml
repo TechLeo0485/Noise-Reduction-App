@@ -302,4 +302,6 @@ ApplicationWindow {
             }
         }
     }
+
+    UpdateDialogs {}
 }

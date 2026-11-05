@@ -16,6 +16,7 @@
 #include <QVariantMap>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -181,6 +182,9 @@ public:
     // ("" = off). setHotkey() stores the text as given; GlobalHotkeys validates it first.
     [[nodiscard]] QString hotkey(const QString& action) const;
     void setHotkey(const QString& action, const QString& text);
+    // The persisted settings, for the Updater's bookkeeping; changeSettings() saves at once.
+    [[nodiscard]] const AppSettings& settings() const { return settings_; }
+    void changeSettings(const std::function<void(AppSettings&)>& change);
     // 0 = Off, 1 = Light, 2 = Balanced, 3 = Strong, -1 = custom (fine-tuned in advanced controls)
     [[nodiscard]] int noiseLevel() const;
 

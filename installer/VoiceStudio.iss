@@ -103,7 +103,10 @@ Filename: "{app}\driver\vs_vmic.exe"; Parameters: "install ""{app}\driver\vsvirt
 Filename: "{app}\driver\vs_vmic.exe"; Parameters: "finish"; StatusMsg: "Checking what the virtual microphone needs..."; Flags: waituntilterminated skipifsilent; Tasks: virtualmic
 #endif
 Filename: "https://vb-audio.com/Cable/"; Description: "Open the VB-CABLE download page (required for Zoom, Teams, Discord)"; Flags: shellexec postinstall skipifsilent nowait; Check: not HasVBCable and VBCableSelected
-Filename: "{app}\VoiceStudio.exe"; Description: "Launch VoiceStudio"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\VoiceStudio.exe"; Description: "Launch VoiceStudio"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; Updates from inside the app run setup with /SILENT /RELAUNCH=1: start VoiceStudio again (as the user, not as
+; administrator), where it then shows what is new.
+Filename: "{app}\VoiceStudio.exe"; Flags: nowait runasoriginaluser; Check: RelaunchAfterUpdate
 
 [Code]
 // The app and ONNX Runtime are built with MSVC 14.44: the system runtime must be at least that new.
@@ -142,6 +145,11 @@ function InitializeSetup(): Boolean;
 begin
   MissingVBCable := not HasVBCable;
   Result := True;
+end;
+
+function RelaunchAfterUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
 end;
 
 function VBCableWasMissing: Boolean;

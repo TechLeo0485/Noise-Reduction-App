@@ -40,6 +40,15 @@ struct AppSettings {
     static constexpr const char* kDefaultHotkeyMute = "Ctrl+Alt+Shift+M";
     std::string hotkeyShowWindow = kDefaultHotkeyShowWindow;
     std::string hotkeyMute = kDefaultHotkeyMute;
+    // Updates (GitHub releases): check when VoiceStudio starts; a version the user chose to skip.
+    bool checkForUpdates = true;
+    std::string skippedVersion;
+    // The version that last ran ("" = none yet: a fresh install). When the running version is newer, VoiceStudio
+    // shows what changed: `updateNotes` (saved before the update was installed, for `updateNotesVersion`) or the
+    // release notes fetched from GitHub.
+    std::string lastRunVersion;
+    std::string updateNotesVersion;
+    std::string updateNotes;
 
     AppSettings();
     void captureParams(const EngineParameters& source);

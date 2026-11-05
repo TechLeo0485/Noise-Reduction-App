@@ -525,6 +525,11 @@ void EngineController::setCloseToTray(bool enabled) {
     }
 }
 
+void EngineController::changeSettings(const std::function<void(AppSettings&)>& change) {
+    change(settings_);
+    saveNow();
+}
+
 QString EngineController::hotkey(const QString& action) const {
     if (action == QLatin1String("showWindow")) {
         return QString::fromStdString(settings_.hotkeyShowWindow);
@@ -809,7 +814,9 @@ void EngineController::restartEngine() {
 void EngineController::resetToDefaults() {
     const auto customPresets = settings_.customPresets;
     const auto virtualDeviceIds = settings_.virtualDeviceIds;
+    const auto lastRunVersion = settings_.lastRunVersion;
     settings_ = AppSettings{};
+    settings_.lastRunVersion = lastRunVersion; // not a setting: which version ran here
     settings_.customPresets = customPresets; // user-created presets are kept
     settings_.virtualDeviceIds = virtualDeviceIds; // and so are the devices marked as virtual microphones
     params_.resetToDefaults();
