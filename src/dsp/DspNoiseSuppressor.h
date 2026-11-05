@@ -29,11 +29,17 @@ private:
     static constexpr float kMaxAttenuationDb = 24.0f;
     static constexpr float kMarginDb = 9.0f;
     static constexpr float kFloorRiseDbPerSecond = 2.5f;
+    // The level is the energy smoothed over this long. The gain still changes every sub-block, but a 16-sample
+    // (0.33 ms) level jumps by +-10 dB on noise alone, and the peaks kept reopening the gain: steady noise was
+    // lowered by only ~2 dB instead of ~13 dB.
+    static constexpr float kLevelMs = 10.0f;
     static constexpr float kBlockRate = static_cast<float>(kSampleRate) / static_cast<float>(kSubBlock);
 
     float attackCoeff_ = 0.0f;
     float releaseCoeff_ = 0.0f;
     float floorFallCoeff_ = 0.0f;
+    float levelCoeff_ = 0.0f;
+    float energy_ = -1.0f; // smoothed mean square; negative = no block yet
     float noiseFloorDb_ = -30.0f;
     float gainDb_ = 0.0f;
 };

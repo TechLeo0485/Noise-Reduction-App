@@ -10,7 +10,8 @@ namespace vs {
 DspNoiseSuppressor::DspNoiseSuppressor() noexcept
     : attackCoeff_(timeConstantCoeff(3.0f, kBlockRate)),
       releaseCoeff_(timeConstantCoeff(90.0f, kBlockRate)),
-      floorFallCoeff_(timeConstantCoeff(40.0f, kBlockRate)) {
+      floorFallCoeff_(timeConstantCoeff(40.0f, kBlockRate)),
+      levelCoeff_(timeConstantCoeff(kLevelMs, kBlockRate)) {
     reset();
 }
 
@@ -19,6 +20,7 @@ void DspNoiseSuppressor::reset() noexcept {
     // whereas starting low would take many seconds to rise to typical room-noise levels.
     noiseFloorDb_ = -30.0f;
     gainDb_ = 0.0f;
+    energy_ = -1.0f;
 }
 
 float DspNoiseSuppressor::processFrame(const float* in, float* out, float strength) noexcept {
@@ -30,7 +32,10 @@ float DspNoiseSuppressor::processFrame(const float* in, float* out, float streng
     for (std::size_t offset = 0; offset < kFrameSize; offset += kSubBlock) {
         const float* src = in + offset;
         float* dst = out + offset;
-        const float levelDb = linearToDb(rms(src, kSubBlock));
+        const float r = rms(src, kSubBlock);
+        const float e = r * r;
+        energy_ = energy_ < 0.0f ? e : e + levelCoeff_ * (energy_ - e);
+        const float levelDb = linearToDb(std::sqrt(energy_));
 
         // Minimum-statistics style noise floor tracking.
         if (levelDb < noiseFloorDb_) {

@@ -53,6 +53,7 @@ void VoiceProcessingChain::reset() noexcept {
     pitch_.reset();
     limiter_.reset();
     currentSuppressor_ = SuppressorKind::Off;
+    primed_ = false;
     inputGain_ = outputGain_ = muteGain_ = 1.0f;
 }
 
@@ -141,9 +142,25 @@ void VoiceProcessingChain::process(float* frame, const EngineParameters& params,
     const float strength = params.get(ParamId::SuppressionStrength) * 0.01f;
     float vad = -1.0f;
     if (target == currentSuppressor_) {
+        primed_ = false;
         vad = runSuppressor(currentSuppressor_, frame, bufferA_.data(), strength);
         std::memcpy(frame, bufferA_.data(), n * sizeof(float));
+    } else if (!primed_ || primedSuppressor_ != target) {
+        // An engine that was not running still holds the audio of when it last ran: RNNoise outputs its previous
+        // input frame, which would be a 10 ms piece of old speech. Reset it and feed it this frame first; its
+        // output joins (crossfaded) from the next frame on.
+        if (target == SuppressorKind::DspOnly) {
+            dspSuppressor_.reset();
+        } else if (target == SuppressorKind::RNNoise && rnnoise_) {
+            rnnoise_->reset();
+        }
+        vad = runSuppressor(currentSuppressor_, frame, bufferA_.data(), strength);
+        runSuppressor(target, frame, bufferB_.data(), strength);
+        std::memcpy(frame, bufferA_.data(), n * sizeof(float));
+        primedSuppressor_ = target;
+        primed_ = true;
     } else {
+        primed_ = false;
         const float vadOld = runSuppressor(currentSuppressor_, frame, bufferA_.data(), strength);
         const float vadNew = runSuppressor(target, frame, bufferB_.data(), strength);
         for (std::size_t i = 0; i < n; ++i) {

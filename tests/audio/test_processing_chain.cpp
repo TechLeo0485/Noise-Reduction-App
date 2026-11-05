@@ -1,5 +1,7 @@
 #include "audio/VoiceProcessingChain.h"
 
+#include "ai/rnnoise/RnnoiseSuppressor.h"
+
 #include "TestUtils.h"
 
 #include <gtest/gtest.h>
@@ -142,13 +144,36 @@ TEST(ProcessingChain, ModeSwitchingIsClickFree) {
     EXPECT_LT(worstJump, 0.15f);
 }
 
+TEST(ProcessingChain, SwitchingBackToRnnoisePlaysNoOldAudio) {
+    if (!RnnoiseSuppressor::create()) {
+        GTEST_SKIP() << "Built without RNNoise";
+    }
+    EngineParameters p;
+    makeTransparent(p);
+    p.set(ParamId::SuppressionEnabled, 1);
+    p.set(ParamId::SuppressionMode, static_cast<float>(SuppressionMode::RNNoise));
+    p.set(ParamId::SuppressionStrength, 0.0f); // RNNoise's output = its delayed dry input: easy to look for
+    VoiceProcessingChain chain;
+    // Loud audio while RNNoise runs, then 1 s of silence with suppression off, then RNNoise again.
+    std::vector<float> loud = test::sine(1000.0, 48000.0, 48000 / 2, 0.5f);
+    processAll(chain, p, loud);
+    p.set(ParamId::SuppressionEnabled, 0);
+    std::vector<float> silence(48000, 0.0f);
+    processAll(chain, p, silence);
+    p.set(ParamId::SuppressionEnabled, 1);
+    const std::vector<float> out = processAll(chain, p, std::vector<float>(kFrame * 4, 0.0f));
+    // Only silence went in since the switch; the last frame RNNoise saw half a second earlier must not come out.
+    EXPECT_LT(test::rmsOf(out, 0), 1e-6);
+}
+
 TEST(ProcessingChain, UnavailableModeFallsBack) {
     EngineParameters p;
     p.set(ParamId::SuppressionMode, static_cast<float>(SuppressionMode::AdvancedAI));
     VoiceProcessingChain chain;
     FrameDiagnostics d;
     std::vector<float> frame(kFrame, 0.0f);
-    chain.process(frame.data(), p, d);
+    chain.process(frame.data(), p, d); // the fallback engine gets its first frame ...
+    chain.process(frame.data(), p, d); // ... and takes over on the second
     EXPECT_TRUE(d.requestedModeUnavailable);
     EXPECT_NE(d.activeSuppressor, SuppressorKind::AdvancedAI);
     EXPECT_NE(d.activeSuppressor, SuppressorKind::Off);

@@ -89,6 +89,10 @@ private:
     Limiter limiter_;
 
     SuppressorKind currentSuppressor_ = SuppressorKind::Off;
+    // Engine that got its first frame (output discarded) and is crossfaded in on the next one; `primed_` says
+    // whether `primedSuppressor_` is valid.
+    SuppressorKind primedSuppressor_ = SuppressorKind::Off;
+    bool primed_ = false;
     float inputGain_ = 1.0f;
     float outputGain_ = 1.0f;
     float muteGain_ = 1.0f;

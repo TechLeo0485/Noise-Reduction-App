@@ -34,9 +34,9 @@ TEST(DspNoiseSuppressor, AttenuatesSteadyNoise) {
     const std::vector<float> noise = test::whiteNoise(48000 * 3, 0.01f); // -40 dBFS RMS
     const std::vector<float> out = runSuppressor(s, noise, 1.0f);
     const double reductionDb = test::toDb(test::rmsOf(noise, 96000) / test::rmsOf(out, 96000));
-    // Broadband expansion can only act on the noise in its fluctuation troughs, so the expected
-    // reduction is modest; the point is that it is clearly non-zero and bounded.
-    EXPECT_GT(reductionDb, 3.0);
+    // Steady noise sits a few dB under the expander's threshold (floor + 9 dB): about 13 dB down. (With the
+    // level measured on 16-sample blocks instead of smoothed, noise peaks reopened the gain: only ~2 dB.)
+    EXPECT_GT(reductionDb, 10.0);
     EXPECT_LT(reductionDb, 25.0); // bounded by the configured maximum attenuation
 }
 
