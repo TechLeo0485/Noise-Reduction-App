@@ -1130,11 +1130,12 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
                 fadeIn_ = 0;
             }
             if (!priming_) {
+                std::size_t fill = available;
+                const long long maxLatency = maxLatencySamples_.load(std::memory_order_relaxed);
                 if (available >= n) {
-                    std::size_t fill = available;
                     // Hard limit: the isolated voice never falls further behind than the delay budget allows.
                     // Normally the slow trim below keeps it well under; this catches bursts after a stall.
-                    const long long excess = pushed_ - popped_ - maxLatencySamples_.load(std::memory_order_relaxed);
+                    const long long excess = pushed_ - popped_ - maxLatency;
                     if (excess > 0 && fill > n) {
                         const std::size_t drop = std::min(fill - n, static_cast<std::size_t>(excess));
                         outRing_.skip(drop);
@@ -1146,6 +1147,18 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
                         fillWindowFrames_ = 0;
                         metrics_.latencyCaps.fetch_add(1, std::memory_order_relaxed);
                     }
+                }
+                // The cap can only drop what has reached outRing_; after a worker stall most of the backlog may
+                // still be in flight (inRing_, resamplers, model). If this frame would still leave later than the
+                // limit, drop what is queued and stay silent instead of delivering it late.
+                if (available >= n && pushed_ - popped_ - static_cast<long long>(n) > maxLatency) {
+                    outRing_.skip(fill);
+                    popped_ += static_cast<long long>(fill);
+                    pendingTrim_ = 0;
+                    minFill_ = SIZE_MAX;
+                    fillWindowFrames_ = 0;
+                    metrics_.latencyCaps.fetch_add(1, std::memory_order_relaxed);
+                } else if (available >= n) {
                     if (pendingTrim_ > 0 && quietFrames_ >= 2 && fill >= n + pendingTrim_) {
                         // Drop surplus delay while the voice is silent; the next frame fades in.
                         outRing_.pop(trimScratch_.data(), pendingTrim_);
