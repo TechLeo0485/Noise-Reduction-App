@@ -8,6 +8,29 @@
 
 namespace vs::voxlock {
 
+PassThroughChunkModel::PassThroughChunkModel(int framesPerRun)
+    : framesPerRun_(std::max(1, framesPerRun)), window2_(kNfft) {
+    constexpr double kTwoPi = 6.283185307179586476925286766559;
+    for (int i = 0; i < kNfft; ++i) {
+        const auto w = static_cast<float>(0.5 - 0.5 * std::cos(kTwoPi * i / kNfft));
+        window2_[static_cast<std::size_t>(i)] = w * w;
+    }
+}
+
+bool PassThroughChunkModel::run(const float* wav, const float* /*hIn*/, const float* /*cIn*/, float* frames,
+                                float* /*hOut*/, float* /*cOut*/) noexcept {
+    // Stream multiplies the overlap-added result by kOutputGain and divides by the summed squared window.
+    constexpr float kUndoGain = 1.0f / kOutputGain;
+    for (int j = 0; j < framesPerRun_; ++j) {
+        const float* in = wav + static_cast<std::size_t>(j) * kHop;
+        float* out = frames + static_cast<std::size_t>(j) * kNfft;
+        for (int i = 0; i < kNfft; ++i) {
+            out[i] = in[i] * window2_[static_cast<std::size_t>(i)] * kUndoGain;
+        }
+    }
+    return true;
+}
+
 Stream::Stream(int framesPerRun, int maxPushSamples)
     : framesPerRun_(std::max(1, framesPerRun)), maxPush_(std::max(1, maxPushSamples)) {
     head_.assign(static_cast<std::size_t>(kPad + 1 + maxPush_), 0.0f);

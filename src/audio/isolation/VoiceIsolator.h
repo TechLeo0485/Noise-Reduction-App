@@ -45,6 +45,7 @@ struct ProcessorTrial {
     std::string id;
     std::string name;
     int framesPerRun = 0;  // K (8 ms hops per inference)
+    int threads = 0;       // intra-op threads (1 on a GPU)
     double p50Ms = 0.0;
     double p95Ms = 0.0;
     bool realTime = false; // p50 <= 75 % and p95 <= 100 % of the chunk's duration
@@ -74,6 +75,9 @@ struct IsolationStatus {
     std::vector<ProcessorTrial> trials; // last calibration, one entry per processor measured
     double prepareProgress = 0.0;   // 0..1 while a new voice is being prepared (busy)
     bool voiceCheck = false;        // the speaker check is active (other voices are muted, see VoiceCheck)
+    // Light isolation: the computer is too slow for the model, so the microphone passes the stream unchanged; the
+    // noise filter and the voice check still work (see voxlock::PassThroughChunkModel).
+    bool light = false;
 };
 
 struct IsolationFrameInfo {
@@ -207,6 +211,8 @@ private:
     bool prepareVoice(const std::vector<float>& audio16k, std::string& error);
     // Measures the allowed processors with `tensors` and publishes the best model (loader thread).
     bool calibrateAndPublish(const voxlock::EnrollmentTensors& tensors, std::string& error);
+    // The computer cannot run the model in real time: pass the microphone through the stream instead.
+    void useLightIsolation(const std::string& reason);
     // The 3 s voice sample for a whole recording (see enroll()). Reports progress as `state` + busy.
     [[nodiscard]] std::vector<float> chooseVoiceSample(const std::vector<float>& audio16k, IsolationState state);
     [[nodiscard]] double savedRecordingSeconds() const;

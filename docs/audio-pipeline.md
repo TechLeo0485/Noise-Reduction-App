@@ -54,14 +54,22 @@ call, weighted overlap-add with the squared Hann window and the -0.5 output gain
   key/value projections of the speaker context) on every call. `bindInputsAsConstants()` turns
   `enroll_mag` and `context` into initializers so ONNX Runtime folds that branch once per voice:
   per-call time drops by about 40 %, with output identical to the unmodified graph.
-- **Calibration.** On every enrollment the loader measures inference on this CPU and picks the
-  smallest chunk K (8 ms hops) with p50 ≤ 75 % and p95 ≤ 100 % of the chunk's duration.
+- **Calibration (any computer).** On every start and enrollment the loader measures inference on this
+  computer and picks the smallest chunk K (8 ms hops) with p50 ≤ 75 % and p95 ≤ 100 % of the chunk's
+  duration. It tries K = 2, 3, 4, 6, 8, 12, 16 - only sizes whose delay fits the budget (see below) - and on
+  CPUs with 6+ logical cores 2 and 4 threads. Larger chunks cost less per second of audio (i7-12700KF:
+  59 % of real time at K = 2, 32 % at 8, 27 % at 16), so a slower laptop keeps up with more delay (K = 8:
+  about 130 ms). Each setting is measured for at most ~1.5 s. If nothing keeps up, it does not run the
+  model anyway (constant gaps) but switches to **light isolation**: the stream passes the microphone
+  (`PassThroughChunkModel`), the noise filter and the voice check still work, so steady noise is removed
+  and other voices are muted while the user is silent (not while both talk). The card shows the mode.
 - **Latency.** Fixed delay = VoxLock's 24 ms look-ahead + chunking + 2 ms of resampling + one frame
   of hand-over + a 20 ms safety cushion: about 80 ms on an i7-12700KF. The start-up cushion assumes
   the worst frame/hop phase; slack above the cushion is trimmed in 5 ms steps during silence
   (1 s observation windows). A late chunk costs one 10 ms frame of silence and grows the cushion by
   5 ms; after 20 s without a late chunk the cushion shrinks by 5 ms again (down to 20 ms), so one bad
-  moment does not cost delay for the rest of the call.
+  moment does not cost delay for the rest of the call. Several late chunks within 10 s (a busy or
+  throttled laptop) step up to the next chunk size that fits the budget; at the largest, light isolation.
 - **Delay limit.** The isolated voice is never further behind than the engine's limit for it (what
   the 300 ms budget leaves, see below; 50..250 ms). Backlog above it is dropped at once (with a fade),
   and the cushion never grows past it.

@@ -1399,6 +1399,7 @@ void EngineController::refreshIsolation() {
     iso["framesPerRun"] = st.framesPerRun;
     iso["chunkMs"] = st.framesPerRun * 8;
     iso["threads"] = st.threads;
+    iso["light"] = st.light;
     iso["calibrationP50Ms"] = round2(st.calibrationP50Ms);
     iso["calibrationP95Ms"] = round2(st.calibrationP95Ms);
     iso["processorId"] = qs(st.processorId);

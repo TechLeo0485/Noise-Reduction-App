@@ -40,6 +40,21 @@ public:
                      float* cOut) noexcept = 0;
 };
 
+// Light isolation, for computers too slow for the model: every frame passes unchanged (windowed like the model's
+// output, so Stream's overlap-add gives back the input exactly, with the same 24 ms delay). The stream's noise
+// filter and the voice check still work on it; another voice is only muted while the user is silent.
+class PassThroughChunkModel final : public IChunkModel {
+public:
+    explicit PassThroughChunkModel(int framesPerRun);
+    [[nodiscard]] int framesPerRun() const noexcept override { return framesPerRun_; }
+    bool run(const float* wav, const float* hIn, const float* cIn, float* frames, float* hOut,
+             float* cOut) noexcept override;
+
+private:
+    int framesPerRun_;
+    std::vector<float> window2_; // analysis x synthesis window, as Stream's normalisation expects
+};
+
 // Live stream locked to one voice: a C++ port of voxlock.core.Stream.
 //
 // Input is 16 kHz mono in any block size. Output is the isolated signal, sample-aligned with the input

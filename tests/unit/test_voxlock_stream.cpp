@@ -78,6 +78,28 @@ TEST(VoxLockStream, ReconstructsInputSampleAligned) {
     }
 }
 
+TEST(VoxLockStream, LightIsolationPassesTheInputUnchanged) {
+    // Light isolation (computers too slow for the model) relies on the stream giving back exactly its input.
+    const std::vector<float> x = test::whiteNoise(16000, 0.1f, 3);
+    for (int k : {2, 16}) {
+        PassThroughChunkModel model(k);
+        Stream stream(k, 160);
+        std::vector<float> y;
+        std::vector<float> buffer(static_cast<std::size_t>(stream.maxOutputSamples()));
+        for (std::size_t i = 0; i < x.size(); i += 160) {
+            const int n = stream.push(model, x.data() + i, 160, buffer.data());
+            ASSERT_GE(n, 0);
+            y.insert(y.end(), buffer.begin(), buffer.begin() + n);
+        }
+        ASSERT_GT(y.size(), 13000u) << "K=" << k;
+        double maxError = 0.0;
+        for (std::size_t i = 0; i < y.size(); ++i) {
+            maxError = std::max(maxError, static_cast<double>(std::fabs(y[i] - x[i])));
+        }
+        EXPECT_LT(maxError, 1e-5) << "K=" << k;
+    }
+}
+
 TEST(VoxLockStream, OutputIsIndependentOfBlockSize) {
     const std::vector<float> x = test::whiteNoise(12000, 0.1f, 7);
     const std::vector<float> a = runStream(2, x, 160);

@@ -53,8 +53,13 @@ Card {
               ? backend.stats.isolationLatencyMs : 80, 0, "ms") + " later" : ""
         StatRow { label: "Engine"; value: root.iso.backend !== undefined && root.iso.backend !== "" ? root.iso.backend : "-" }
         StatRow {
+            label: "Mode"
+            value: root.iso.light === true ? "light (this computer is too slow for the model)" : "full (VoxLock model)"
+        }
+        StatRow {
             label: "Chunk size (calibrated)"
-            value: root.iso.framesPerRun > 0 ? root.iso.chunkMs + " ms, " + root.iso.threads + " threads" : "-"
+            value: root.iso.light === true ? "-"
+                   : root.iso.framesPerRun > 0 ? root.iso.chunkMs + " ms, " + root.iso.threads + " threads" : "-"
             monospace: true
         }
         StatRow { label: "Isolation latency (measured)"; value: root.on ? Theme.fmt(backend.stats.isolationLatencyMs, 1, "ms") : "-"; monospace: true }

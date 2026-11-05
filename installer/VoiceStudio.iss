@@ -1,5 +1,5 @@
 ; Inno Setup 6 script for VoiceStudio. Invoked by scripts\package.ps1:
-;   ISCC.exe /DAppVersion=0.9.0 /DSourceDir=<install dir> /DVCRedist=<vc_redist.x64.exe>
+;   ISCC.exe /DAppVersion=1.0.0 /DSourceDir=<install dir> /DVCRedist=<vc_redist.x64.exe>
 ;            /DVBCableDir=<extracted VB-CABLE driver pack> /O<output dir> installer\VoiceStudio.iss
 ;
 ; Produces one self-contained setup .exe: the app, Qt, ONNX Runtime, the VoxLock models, the Microsoft
