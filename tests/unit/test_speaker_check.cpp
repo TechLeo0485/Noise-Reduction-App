@@ -148,16 +148,27 @@ TEST(SpeakerCheck, MutesAnotherVoiceAndReopensForTheUser) {
     for (int i = 0; i < 50; ++i) {
         EXPECT_EQ(check.feed(silence.data(), silence.size()), VoiceCheck::Action::None);
     }
-    // While open, a check needs 0.8 s of speech.
+    // Speech after a silence passes and is judged after 0.4 s of it.
     int checksAt = -1;
     for (int i = 0; i < 30 && checksAt < 0; ++i) {
         if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
             checksAt = i;
         }
     }
-    ASSERT_GE(checksAt, 7);
+    ASSERT_EQ(checksAt, 3);
+    EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
+    EXPECT_FALSE(check.decide(0.3f)); // clearly the user: open
+    EXPECT_TRUE(check.open());
+    // While open, a check needs 0.8 s of speech.
+    checksAt = -1;
+    for (int i = 0; i < 30 && checksAt < 0; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            checksAt = i;
+        }
+    }
+    ASSERT_GE(checksAt, 2);
     EXPECT_EQ(check.speech().size(), 16000u * 4 / 5);
-    EXPECT_FALSE(check.decide(0.3f)); // ambiguous: stays as it is
+    EXPECT_FALSE(check.decide(0.2f)); // ambiguous: stays as it is
     EXPECT_TRUE(check.open());
     EXPECT_TRUE(check.decide(0.05f)); // someone else: muted, and the model state is reset
     EXPECT_FALSE(check.open());
@@ -217,13 +228,59 @@ TEST(SpeakerCheck, MutesAnotherVoiceAndReopensForTheUser) {
     }
     EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
     EXPECT_EQ(check.lastScore(), 0.3f);
-    // A pause while open changes nothing.
-    for (int i = 0; i < 10; ++i) {
+    // A short pause while open changes nothing.
+    for (int i = 0; i < 9; ++i) {
         check.feed(silence.data(), silence.size());
     }
     EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
+    // A silence of 1 s ends the user's turn: the next speech passes at once and is judged on its own after 0.4 s,
+    // without a model reset (the model still follows the user).
+    check.feed(silence.data(), silence.size());
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::OpenOnSpeech);
+    EXPECT_FALSE(check.resetDue());
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_EQ(check.feed(speech.data(), speech.size()), VoiceCheck::Action::None);
+        EXPECT_TRUE(check.open());
+    }
+    ASSERT_EQ(check.feed(speech.data(), speech.size()), VoiceCheck::Action::Check);
+    EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
+    EXPECT_TRUE(check.decide(0.05f)); // someone else talking after the user's silence: muted
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
     check.reset();
     EXPECT_TRUE(check.open());
+}
+
+TEST(SpeakerCheck, MutedNeedsTwoClearChecksToReopen) {
+    VoiceCheck check;
+    std::vector<float> speech(160 * 10);
+    for (std::size_t i = 0; i < speech.size(); ++i) {
+        speech[i] = 0.1f * static_cast<float>(std::sin(test::kTwoPi * 300.0 * static_cast<double>(i) / 16000.0));
+    }
+    const auto nextCheck = [&]() {
+        for (int i = 0; i < 20; ++i) {
+            if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+                return true;
+            }
+        }
+        return false;
+    };
+    ASSERT_TRUE(nextCheck());
+    EXPECT_TRUE(check.decide(0.05f));
+    ASSERT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    // One window that sounds like the user (talking over, no pause) is not enough ...
+    ASSERT_TRUE(nextCheck());
+    EXPECT_FALSE(check.decide(0.3f));
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    // ... and an unclear one in between starts the count again ...
+    ASSERT_TRUE(nextCheck());
+    EXPECT_FALSE(check.decide(0.2f));
+    ASSERT_TRUE(nextCheck());
+    EXPECT_FALSE(check.decide(0.3f));
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    // ... two in a row reopen.
+    ASSERT_TRUE(nextCheck());
+    EXPECT_FALSE(check.decide(0.3f));
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
 }
 
 TEST(SpeakerCheck, AnotherVoiceWithPausesDoesNotPassEveryPhrase) {
@@ -277,7 +334,7 @@ TEST(SpeakerCheck, AnotherVoiceWithPausesDoesNotPassEveryPhrase) {
     feedSpeech(4, 0.05f);
     EXPECT_EQ(pauseUntilArmed(), 6); // one strike again (the trial above)
 
-    // An ambiguous quick check is not enough: judged again on 0.8 s, still passing meanwhile.
+    // An ambiguous quick check is not enough: judged again on 0.8 s, still passing meanwhile ...
     for (int i = 0; i < 4; ++i) {
         if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
             EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
@@ -289,15 +346,23 @@ TEST(SpeakerCheck, AnotherVoiceWithPausesDoesNotPassEveryPhrase) {
     for (int i = 0; i < 4; ++i) {
         if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
             EXPECT_EQ(check.speech().size(), 16000u * 4 / 5);
-            EXPECT_FALSE(check.decide(0.18f));
+            EXPECT_TRUE(check.decide(0.18f)); // ... and muted if it is still not clearly the user
             ++checks;
         }
     }
     EXPECT_EQ(checks, 1);
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    pauseUntilArmed();
+    // Clearly the user on the quick check: open.
+    for (int i = 0; i < 4; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            EXPECT_FALSE(check.decide(0.3f));
+        }
+    }
     EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
-    // Open now, and checked again every 0.3 s.
+    // Open now, and checked again (on 0.8 s of its speech) every 0.3 s.
     bool muted = false;
-    for (int i = 0; i < 4 && !muted; ++i) {
+    for (int i = 0; i < 8 && !muted; ++i) {
         if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
             EXPECT_EQ(check.speech().size(), 16000u * 4 / 5);
             muted = check.decide(0.05f);
@@ -314,14 +379,22 @@ TEST(SpeakerCheck, OldSpeechIsNotUsed) {
         speech[i] = 0.1f * static_cast<float>(std::sin(test::kTwoPi * 300.0 * static_cast<double>(i) / 16000.0));
     }
     const std::vector<float> silence(speech.size(), 0.0f);
-    // 0.5 s of speech, a 5 s pause, 0.5 s of speech: never 0.8 s within the last 4 s.
-    const std::vector<const std::vector<float>*> parts{&speech, &silence, &speech};
-    for (const std::vector<float>* part : parts) {
-        const int blocks = part == &silence ? 50 : 5;
-        for (int i = 0; i < blocks; ++i) {
-            EXPECT_EQ(check.feed(part->data(), part->size()), VoiceCheck::Action::None);
+    // 0.3 s of speech, a 5 s pause, 0.5 s of speech: the check after the pause hears only the new speech.
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_EQ(check.feed(speech.data(), speech.size()), VoiceCheck::Action::None);
+    }
+    for (int i = 0; i < 50; ++i) {
+        EXPECT_EQ(check.feed(silence.data(), silence.size()), VoiceCheck::Action::None);
+    }
+    int checks = 0;
+    for (int i = 0; i < 5; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
+            check.decide(0.3f);
+            ++checks;
         }
     }
+    EXPECT_EQ(checks, 1);
 }
 
 TEST(SpeakerCheck, StateResetKeepsTheAudioFlowing) {

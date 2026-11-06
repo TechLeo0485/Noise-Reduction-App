@@ -56,9 +56,19 @@ public:
         double pauseSeconds = 0.3;   // while muted, a pause this long ends the other voice's turn; the next
                                      // speech passes at once ...
         double trialSeconds = 0.4;   // ... and is muted again if this much of it is below closeBelow; if it is
-                                     // not clearly the user (under openAbove) it is judged again on openSeconds.
+                                     // not clearly the user (under openAbove) it is judged again on openSeconds,
+                                     // and muted if it is still not clearly the user then.
                                      // Once open, it is checked every checkEvery on all of its speech (at least
                                      // openSeconds) until closeSeconds of it is there.
+        double rejudgeSeconds = 1.0; // while open, a silence this long ends the user's turn: whoever speaks next
+                                     // is judged like new speech after a pause (trialSeconds), on their own
+                                     // speech only. Without it, someone talking after the user had been silent
+                                     // for a while passed until closeSeconds of their speech had been heard -
+                                     // judged together with the user's last words if those were under maxAge old
+                                     // - and for good if their similarity stayed at or above closeBelow.
+                                     // The model state is not reset: the model still follows the user.
+        int reopenChecks = 2;        // while muted (no pause), this many checks in a row above openAbove reopen
+                                     // the gate: one similar-sounding window of the other voice is not enough
         double pauseStep = 0.3;      // each new speech after a pause that turned out to be the other voice again
         int maxStrikes = 3;          // makes the pause that ends a turn this much longer (up to maxStrikes times),
                                      // so someone talking with ordinary pauses between phrases does not pass
@@ -101,12 +111,15 @@ public:
 private:
     static constexpr int kBlock = 160; // 10 ms
     void mute() noexcept;
-    // Muted -> (pause) -> Armed -> (speech) -> Trial -> Open or Muted.
+    // Whoever speaks next is judged on their own speech; `resetModel` also restarts the model state.
+    void arm(bool resetModel) noexcept;
+    // Muted -> (pause) -> Armed -> (speech) -> Trial -> Open or Muted; Open -> (long silence) -> Armed.
     enum class State { Open, Muted, Armed, Trial };
     Settings s_;
     State state_ = State::Open;
     bool resetPending_ = false;
     int strikes_ = 0;                   // trials in a row that were the other voice (longer pause needed)
+    int reopenStreak_ = 0;              // checks in a row above openAbove while muted
     bool longTrial_ = false;            // the quick trial was ambiguous: judged again on openSeconds
     bool probation_ = false;            // open after a trial: checked on shorter windows until closeSeconds
     bool asked_ = false;                // a trial check was handed out in this feed() call

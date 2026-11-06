@@ -211,6 +211,7 @@ void VoiceCheck::reset() noexcept {
     state_ = State::Open;
     resetPending_ = false;
     strikes_ = 0;
+    reopenStreak_ = 0;
     longTrial_ = false;
     probation_ = false;
     asked_ = false;
@@ -260,11 +261,11 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
             if (state_ == State::Muted && silent_ >= static_cast<long long>(pauseNeeded() * kSampleRate)) {
                 // The other voice stopped. Whoever speaks next passes at once, judged on their own speech only,
                 // and starts from a fresh model state.
-                state_ = State::Armed;
-                count_ = 0;
-                newSpeech_ = 0;
-                longTrial_ = false;
-                resetPending_ = true;
+                arm(true);
+            } else if (state_ == State::Open && silent_ >= static_cast<long long>(s_.rejudgeSeconds * kSampleRate)) {
+                // The user's turn ended. Whoever speaks next passes at once but is judged quickly, on their own
+                // speech only; the model keeps following the user.
+                arm(false);
             }
         }
         partial_.clear();
@@ -328,8 +329,18 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
 void VoiceCheck::mute() noexcept {
     state_ = State::Muted;
     lastReset_ = time_;
+    reopenStreak_ = 0;
     longTrial_ = false;
     probation_ = false;
+}
+
+void VoiceCheck::arm(bool resetModel) noexcept {
+    state_ = State::Armed;
+    count_ = 0;
+    newSpeech_ = 0;
+    longTrial_ = false;
+    probation_ = false;
+    resetPending_ = resetModel;
 }
 
 bool VoiceCheck::decide(float score) {
@@ -343,14 +354,20 @@ bool VoiceCheck::decide(float score) {
             mute();
             return true;
         }
-        if (score > s_.openAbove || longTrial_) {
+        if (score > s_.openAbove) {
             state_ = State::Open;
             longTrial_ = false;
             probation_ = true;
-        } else {
-            longTrial_ = true; // not clearly the user on 0.4 s: judge it again on more speech
+            return false;
         }
-        return false;
+        if (!longTrial_) {
+            longTrial_ = true; // not clearly the user on 0.4 s: judge it again on more speech
+            return false;
+        }
+        // Still not clearly the user on 0.8 s: fail closed (no strike, it may be the user on a bad moment;
+        // the muted state reopens for them on two clear checks).
+        mute();
+        return true;
     case State::Open:
         if (score < s_.closeBelow) {
             mute();
@@ -361,9 +378,12 @@ bool VoiceCheck::decide(float score) {
         }
         return false;
     case State::Muted:
-        if (score > s_.openAbove) {
+        if (score <= s_.openAbove) {
+            reopenStreak_ = 0;
+        } else if (++reopenStreak_ >= s_.reopenChecks) {
             state_ = State::Open;
             strikes_ = 0;
+            reopenStreak_ = 0;
         }
         return false;
     case State::Armed:

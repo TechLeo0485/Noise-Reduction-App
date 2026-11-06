@@ -90,8 +90,17 @@ call, weighted overlap-add with the squared Hann window and the -0.5 output gain
   the user must be heard after a fresh reset). A pause of 0.3 s ends the other voice's turn: the state
   is reset, and the worker opens the gate itself (5 ms fade-in) on the first chunk of new speech, so
   the user's first syllable passes. The checker judges that new speech after 0.4 s and mutes again
-  below 0.15; the other voice therefore passes for ~0.4 s at the start of each phrase after a pause.
-  Without a pause (talking over the other voice), the gate reopens above 0.22 over 0.8 s of speech.
+  below 0.15; between 0.15 and 0.22 it is judged again on 0.8 s and muted unless it is then above 0.22
+  (fail-closed). The other voice therefore passes for ~0.4 s at the start of each phrase after a pause.
+  The same applies when the gate is open and the user has been silent for 1 s: whoever speaks next is
+  judged on their own speech after 0.4 s (without a model reset; the model still follows the user).
+  Before, the gate stayed open through the user's silence, so someone who started talking then passed
+  until 0.8 s of their speech had been heard - judged together with the user's last words if those were
+  under 4 s old - and for good while their similarity stayed at or above 0.15.
+  Without a pause (talking over the other voice), the gate reopens after two checks in a row above 0.22
+  over 0.8 s of speech (one similar-sounding window of the other voice used to be enough).
+  Conversation test (user's held-out speech, male TTS voice at -6 dB after 1.5-10 s of silence):
+  other voice passed 6.3 s -> 2.4 s in five turns, user speech cut 0.22 s -> 0.19 s.
   The checker thread runs at below-normal priority on the E-cores. Measured with the user's recording
   and TTS voices: the other voice went from 0 dB (fully passed) to about -10 dB overall (muted after
   ~1.5 s, short leaks at phrase starts); the user's replies after pauses of 0.35-1.5 s keep their start
