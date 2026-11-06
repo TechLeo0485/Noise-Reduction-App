@@ -3,6 +3,7 @@
 #include "audio/EngineConfig.h"
 #include "core/Parameters.h"
 #include "diagnostics/Logger.h"
+#include "settings/Presets.h"
 
 #include <QString>
 
@@ -40,6 +41,17 @@ struct AppSettings {
     static constexpr const char* kDefaultHotkeyMute = "Ctrl+Alt+Shift+M";
     std::string hotkeyShowWindow = kDefaultHotkeyShowWindow;
     std::string hotkeyMute = kDefaultHotkeyMute;
+    // Voice shortcuts: switch to the next voice in the list; turn the voice effects off (natural voice) and back on.
+    static constexpr const char* kDefaultHotkeyNextVoice = "Ctrl+Alt+Shift+N";
+    static constexpr const char* kDefaultHotkeyVoiceOnOff = "Ctrl+Alt+Shift+B";
+    std::string hotkeyNextVoice = kDefaultHotkeyNextVoice;
+    std::string hotkeyVoiceOnOff = kDefaultHotkeyVoiceOnOff;
+    // Voices the user saved under their own names (after the built-in looks), and the voice that "voice effects
+    // on" returns to after they were turned off.
+    std::vector<CustomVoice> customVoices;
+    VoiceValues lastVoice{-1.5f, 1.5f, 3.f};
+    // The voice-isolation model (IsolationModels.h).
+    std::string isolationModel = "voxlock";
     // Updates (GitHub releases): check when VoiceStudio starts; a version the user chose to skip.
     bool checkForUpdates = true;
     std::string skippedVersion;

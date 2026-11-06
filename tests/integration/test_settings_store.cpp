@@ -73,6 +73,47 @@ TEST(SettingsStore, ValuesAreValidatedOnLoad) {
     EXPECT_EQ(s.lastRunVersion, "0.0.0"); // settings from before updates existed: an older version ran
 }
 
+TEST(SettingsStore, VoicesHotkeysAndIsolationModel) {
+    AppSettings s;
+    EXPECT_EQ(s.isolationModel, "voxlock");
+    EXPECT_EQ(s.hotkeyNextVoice, AppSettings::kDefaultHotkeyNextVoice);
+    s.customVoices.push_back({"Interview", {-1.0f, 1.5f, 4.0f}});
+    s.customVoices.push_back({"Gaming", {2.0f, 0.0f, 0.0f}});
+    s.lastVoice = {-3.0f, 1.0f, 4.0f};
+    s.isolationModel = "light";
+    s.hotkeyNextVoice = "Ctrl+Alt+F7";
+    s.hotkeyVoiceOnOff = "";
+
+    AppSettings loaded;
+    ASSERT_TRUE(SettingsStore::fromJson(SettingsStore::toJson(s), loaded));
+    ASSERT_EQ(loaded.customVoices.size(), 2u);
+    EXPECT_EQ(loaded.customVoices[0].name, "Interview"); // order kept
+    EXPECT_TRUE(loaded.customVoices[0].values.matches({-1.0f, 1.5f, 4.0f}));
+    EXPECT_EQ(loaded.customVoices[1].name, "Gaming");
+    EXPECT_TRUE(loaded.lastVoice.matches({-3.0f, 1.0f, 4.0f}));
+    EXPECT_EQ(loaded.isolationModel, "light");
+    EXPECT_EQ(loaded.hotkeyNextVoice, "Ctrl+Alt+F7");
+    EXPECT_EQ(loaded.hotkeyVoiceOnOff, "");
+
+    // Unknown models fall back to the default; voice values are clamped; empty and duplicate names are dropped.
+    const QByteArray json = R"({
+        "version": 1,
+        "isolationModel": "voicefilter-xyz",
+        "customVoices": [
+            { "name": "Huge", "depthSt": -40, "bodySt": 99, "presenceDb": -3 },
+            { "name": "  ", "depthSt": 1 },
+            { "name": "Huge", "depthSt": 2 }
+        ]
+    })";
+    AppSettings v;
+    ASSERT_TRUE(SettingsStore::fromJson(json, v));
+    EXPECT_EQ(v.isolationModel, "voxlock");
+    ASSERT_EQ(v.customVoices.size(), 1u);
+    EXPECT_FLOAT_EQ(v.customVoices[0].values.depthSt, -12.0f);
+    EXPECT_FLOAT_EQ(v.customVoices[0].values.bodySt, 6.0f);
+    EXPECT_FLOAT_EQ(v.customVoices[0].values.presenceDb, 0.0f);
+}
+
 TEST(SettingsStore, RejectsCorruptOrFutureFiles) {
     AppSettings s;
     QString error;

@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import VoiceStudio
 
 // Strict voice isolation: the on/off switch, its status and, under "Technical details", the measured
-// cost. The voice it uses is recorded in VoiceRecorderCard, shown right below it on the Clean-up page.
+// cost. The voice it uses is recorded in VoiceRecorderCard, shown below it on the Only my voice page.
 Card {
     id: root
 
@@ -54,7 +54,10 @@ Card {
         StatRow { label: "Engine"; value: root.iso.backend !== undefined && root.iso.backend !== "" ? root.iso.backend : "-" }
         StatRow {
             label: "Mode"
-            value: root.iso.light === true ? "light (this computer is too slow for the model)" : "full (VoxLock model)"
+            value: root.iso.lightFallback === true ? "Voice check only (this computer is too slow for the selected model)"
+                   : root.iso.light === true ? "Voice check only"
+                   : root.iso.model === "voicefilter" ? "Lightweight filter (VoiceFilter-Lite)"
+                   : "Full isolation (VoxLock)"
         }
         StatRow {
             label: "Chunk size (calibrated)"

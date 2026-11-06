@@ -141,16 +141,42 @@ const std::vector<VoiceLook>& voiceLooks() {
         {"deep", "Deep", "Clearly lower, still clear.", -3.f, 1.f, 4.f},
         {"warm", "Warm", "A little deeper and softer.", -1.f, 1.f, 1.5f},
         {"radio", "Radio", "Thick, close and present, like a radio host.", -1.f, 2.f, 5.f},
+        {"clear", "Clear", "Same pitch, crisper and easier to understand.", 0.f, 0.5f, 6.f},
+        {"lighter", "Lighter", "A little higher and lighter, still natural.", 2.f, -1.5f, 2.f},
+        {"veryDeep", "Very Deep", "Much lower and bigger, with the bass kept in check.", -5.f, 2.f, 5.f},
     };
     return looks;
 }
 
+bool VoiceValues::natural() const noexcept {
+    return std::fabs(depthSt) < 0.01f && std::fabs(bodySt) < 0.01f && presenceDb < 0.05f;
+}
+
+bool VoiceValues::matches(const VoiceValues& other) const noexcept {
+    return std::fabs(depthSt - other.depthSt) < 0.01f && std::fabs(bodySt - other.bodySt) < 0.01f &&
+           std::fabs(presenceDb - other.presenceDb) < 0.01f;
+}
+
+VoiceValues voiceValues(const VoiceLook& look) noexcept {
+    return {look.depthSt, look.bodySt, look.presenceDb};
+}
+
+VoiceValues currentVoiceValues(const EngineParameters& params) {
+    if (!params.getBool(ParamId::PitchEnabled)) {
+        return {};
+    }
+    return {params.get(ParamId::PitchSemitones), params.get(ParamId::PitchBodySt), params.get(ParamId::PitchPresenceDb)};
+}
+
+void applyVoiceValues(const VoiceValues& values, EngineParameters& params) {
+    params.set(ParamId::PitchSemitones, values.depthSt);
+    params.set(ParamId::PitchBodySt, values.bodySt);
+    params.set(ParamId::PitchPresenceDb, values.presenceDb);
+    params.set(ParamId::PitchEnabled, values.natural() ? 0.f : 1.f);
+}
+
 void applyVoiceLook(const VoiceLook& look, EngineParameters& params) {
-    params.set(ParamId::PitchSemitones, look.depthSt);
-    params.set(ParamId::PitchBodySt, look.bodySt);
-    params.set(ParamId::PitchPresenceDb, look.presenceDb);
-    const bool changes = look.depthSt != 0.f || look.bodySt != 0.f || look.presenceDb != 0.f;
-    params.set(ParamId::PitchEnabled, changes ? 1.f : 0.f);
+    applyVoiceValues(voiceValues(look), params);
 }
 
 const VoiceLook* matchVoiceLook(const EngineParameters& params) {

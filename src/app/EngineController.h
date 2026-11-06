@@ -62,8 +62,11 @@ class EngineController : public QObject {
     Q_PROPERTY(bool rnnoiseAvailable READ rnnoiseAvailable CONSTANT)
     Q_PROPERTY(bool advancedAiAvailable READ advancedAiAvailable CONSTANT)
     // Voice character looks (Natural, Deep & Strong, ...) and the one the current values match ("" = custom).
-    Q_PROPERTY(QVariantList voiceLooks READ voiceLooks CONSTANT)
+    Q_PROPERTY(QVariantList voiceLooks READ voiceLooks NOTIFY voiceLooksChanged)
     Q_PROPERTY(QString voiceLook READ voiceLook NOTIFY paramsChanged)
+    // Voice-isolation models (IsolationModelInfo fields + installed) and the selected one.
+    Q_PROPERTY(QVariantList isolationModels READ isolationModels NOTIFY configChanged)
+    Q_PROPERTY(QString isolationModel READ isolationModel WRITE setIsolationModel NOTIFY configChanged)
 
     // Live meters (~30 Hz)
     Q_PROPERTY(double inputLevelDb READ inputLevelDb NOTIFY metersChanged)
@@ -144,6 +147,9 @@ public:
     [[nodiscard]] bool advancedAiAvailable() const;
     [[nodiscard]] QVariantList voiceLooks() const;
     [[nodiscard]] QString voiceLook() const;
+    [[nodiscard]] QVariantList isolationModels() const;
+    [[nodiscard]] QString isolationModel() const { return QString::fromStdString(settings_.isolationModel); }
+    void setIsolationModel(const QString& id);
 
     // Meters
     [[nodiscard]] double inputLevelDb() const { return inputLevelDb_; }
@@ -195,6 +201,12 @@ public:
     Q_INVOKABLE void selectMonitorDevice(const QString& id);
     Q_INVOKABLE void applyPreset(const QString& name);
     Q_INVOKABLE void applyVoiceLook(const QString& key);
+    // Saves the current voice under `name` (replaces a saved voice of that name). False if the voice is natural,
+    // the name is empty or the list is full.
+    Q_INVOKABLE bool saveVoiceLook(const QString& name);
+    Q_INVOKABLE void deleteVoiceLook(const QString& key); // saved voices only
+    Q_INVOKABLE void nextVoiceLook(int delta = 1);        // cycles through voiceLooks
+    Q_INVOKABLE void toggleVoiceEffects();                 // natural voice <-> the last voice
     Q_INVOKABLE void saveCustomPreset(const QString& name);
     Q_INVOKABLE void deleteCustomPreset(const QString& name);
     Q_INVOKABLE void setPerformanceMode(const QString& key);
@@ -242,11 +254,14 @@ signals:
     void cableTestChanged();
     void voiceCheckChanged();
     void isolationChanged();
+    void voiceLooksChanged();
     void hiddenToTray();
     void setupChanged();
 
 private:
     void onDeviceEvent(const DeviceEvent& event);
+    bool findVoice(const QString& key, VoiceValues& values, std::string& label) const;
+    void setVoice(const VoiceValues& values);
     void onStatusFromSupervisor();
     void updateMeters();
     void updateStats();

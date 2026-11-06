@@ -7,6 +7,7 @@ add_executable(vs_unit_tests
     unit/test_sample_conversion.cpp
     unit/test_biquad.cpp
     unit/test_noise_gate.cpp
+    unit/test_click_suppressor.cpp
     unit/test_dynamics.cpp
     unit/test_resampler.cpp
     unit/test_adaptive_reader.cpp

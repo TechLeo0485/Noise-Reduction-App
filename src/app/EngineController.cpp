@@ -4,6 +4,7 @@
 #include "diagnostics/LoopbackLatencyTester.h"
 #include "diagnostics/Logger.h"
 #include "diagnostics/VoicePlayback.h"
+#include "audio/isolation/IsolationModels.h"
 #include "settings/Presets.h"
 
 #include <QClipboard>
@@ -132,6 +133,7 @@ EngineController::EngineController(QObject* parent) : QObject(parent), settingsP
     // Strict voice isolation: runtime and models ship next to the exe; the voice sample stays in local app data.
     const std::filesystem::path appDir = QCoreApplication::applicationDirPath().toStdWString();
     applyProcessorChoice(); // before initialize(): the first calibration already uses it
+    supervisor_->engine().isolator().setModel(settings_.isolationModel);
     supervisor_->engine().isolator().initialize(appDir, appDir / L"models" / L"voxlock",
                                                 appDataDirectory() / L"voice" / L"voice_sample.wav");
     refreshIsolation();
@@ -537,13 +539,21 @@ QString EngineController::hotkey(const QString& action) const {
     if (action == QLatin1String("mute")) {
         return QString::fromStdString(settings_.hotkeyMute);
     }
+    if (action == QLatin1String("nextVoice")) {
+        return QString::fromStdString(settings_.hotkeyNextVoice);
+    }
+    if (action == QLatin1String("voiceOnOff")) {
+        return QString::fromStdString(settings_.hotkeyVoiceOnOff);
+    }
     return {};
 }
 
 void EngineController::setHotkey(const QString& action, const QString& text) {
-    std::string* slot = action == QLatin1String("showWindow") ? &settings_.hotkeyShowWindow
-                        : action == QLatin1String("mute")     ? &settings_.hotkeyMute
-                                                              : nullptr;
+    std::string* slot = action == QLatin1String("showWindow")   ? &settings_.hotkeyShowWindow
+                        : action == QLatin1String("mute")       ? &settings_.hotkeyMute
+                        : action == QLatin1String("nextVoice")  ? &settings_.hotkeyNextVoice
+                        : action == QLatin1String("voiceOnOff") ? &settings_.hotkeyVoiceOnOff
+                                                                : nullptr;
     if (slot != nullptr && *slot != text.toStdString()) {
         *slot = text.toStdString();
         emit hotkeysChanged();
@@ -813,11 +823,14 @@ void EngineController::restartEngine() {
 
 void EngineController::resetToDefaults() {
     const auto customPresets = settings_.customPresets;
+    const auto customVoices = settings_.customVoices;
     const auto virtualDeviceIds = settings_.virtualDeviceIds;
     const auto lastRunVersion = settings_.lastRunVersion;
     settings_ = AppSettings{};
     settings_.lastRunVersion = lastRunVersion; // not a setting: which version ran here
     settings_.customPresets = customPresets; // user-created presets are kept
+    settings_.customVoices = customVoices;   // and so are the user's saved voices
+    supervisor_->engine().isolator().setModel(settings_.isolationModel);
     settings_.virtualDeviceIds = virtualDeviceIds; // and so are the devices marked as virtual microphones
     params_.resetToDefaults();
     if (const Preset* p = findBuiltInPreset(settings_.activePreset)) {
@@ -890,6 +903,26 @@ void EngineController::setParam(const QString& key, const QVariant& value) {
     scheduleSave();
 }
 
+namespace {
+
+const QString kCustomVoicePrefix = QStringLiteral("custom:");
+
+QString describeVoice(const VoiceValues& v) {
+    QStringList parts;
+    if (std::fabs(v.depthSt) >= 0.01f) {
+        parts << QStringLiteral("Pitch %1%2").arg(v.depthSt > 0 ? QStringLiteral("+") : QString()).arg(v.depthSt, 0, 'g', 3);
+    }
+    if (std::fabs(v.bodySt) >= 0.01f) {
+        parts << QStringLiteral("Thickness %1%2").arg(v.bodySt > 0 ? QStringLiteral("+") : QString()).arg(v.bodySt, 0, 'g', 3);
+    }
+    if (v.presenceDb >= 0.05f) {
+        parts << QStringLiteral("Presence +%1").arg(v.presenceDb, 0, 'g', 3);
+    }
+    return parts.isEmpty() ? QStringLiteral("Your own voice, unchanged.") : parts.join(QStringLiteral(", "));
+}
+
+} // namespace
+
 QVariantList EngineController::voiceLooks() const {
     QVariantList list;
     for (const VoiceLook& look : vs::voiceLooks()) {
@@ -897,26 +930,174 @@ QVariantList EngineController::voiceLooks() const {
         m["key"] = QString::fromLatin1(look.key);
         m["label"] = QString::fromUtf8(look.label);
         m["description"] = QString::fromUtf8(look.description);
+        m["custom"] = false;
+        list.append(m);
+    }
+    for (const CustomVoice& voice : settings_.customVoices) {
+        QVariantMap m;
+        m["key"] = kCustomVoicePrefix + QString::fromStdString(voice.name);
+        m["label"] = QString::fromStdString(voice.name);
+        m["description"] = describeVoice(voice.values);
+        m["custom"] = true;
         list.append(m);
     }
     return list;
 }
 
 QString EngineController::voiceLook() const {
-    const VoiceLook* look = matchVoiceLook(params_);
-    return look != nullptr ? QString::fromLatin1(look->key) : QString();
+    if (const VoiceLook* look = matchVoiceLook(params_)) {
+        return QString::fromLatin1(look->key);
+    }
+    const VoiceValues current = currentVoiceValues(params_);
+    for (const CustomVoice& voice : settings_.customVoices) {
+        if (voice.values.matches(current)) {
+            return kCustomVoicePrefix + QString::fromStdString(voice.name);
+        }
+    }
+    return {};
+}
+
+bool EngineController::findVoice(const QString& key, VoiceValues& values, std::string& label) const {
+    for (const VoiceLook& look : vs::voiceLooks()) {
+        if (key == QLatin1String(look.key)) {
+            values = voiceValues(look);
+            label = look.label;
+            return true;
+        }
+    }
+    if (key.startsWith(kCustomVoicePrefix)) {
+        const std::string name = key.mid(kCustomVoicePrefix.size()).toStdString();
+        for (const CustomVoice& voice : settings_.customVoices) {
+            if (voice.name == name) {
+                values = voice.values;
+                label = voice.name;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void EngineController::setVoice(const VoiceValues& values) {
+    applyVoiceValues(values, params_);
+    if (!values.natural()) {
+        settings_.lastVoice = values; // what "voice effects on" returns to
+    }
+    emit paramsChanged();
+    scheduleSave();
 }
 
 void EngineController::applyVoiceLook(const QString& key) {
-    for (const VoiceLook& look : vs::voiceLooks()) {
-        if (key == QLatin1String(look.key)) {
-            vs::applyVoiceLook(look, params_);
-            logInfo(std::string("Voice character: ") + look.label);
-            emit paramsChanged();
-            scheduleSave();
-            return;
+    VoiceValues values;
+    std::string label;
+    if (findVoice(key, values, label)) {
+        setVoice(values);
+        logInfo("Voice: " + label);
+    }
+}
+
+bool EngineController::saveVoiceLook(const QString& name) {
+    const QString trimmed = name.trimmed().left(static_cast<qsizetype>(kMaxCustomVoiceName));
+    const VoiceValues current = currentVoiceValues(params_);
+    if (trimmed.isEmpty() || current.natural()) {
+        return false;
+    }
+    const std::string key = trimmed.toStdString();
+    auto it = std::find_if(settings_.customVoices.begin(), settings_.customVoices.end(),
+                           [&](const CustomVoice& v) { return v.name == key; });
+    if (it != settings_.customVoices.end()) {
+        it->values = current; // same name: replaced
+    } else if (settings_.customVoices.size() < kMaxCustomVoices) {
+        settings_.customVoices.push_back({key, current});
+    } else {
+        return false;
+    }
+    logInfo("Voice saved: " + key);
+    emit voiceLooksChanged();
+    emit paramsChanged(); // voiceLook now names it
+    scheduleSave();
+    return true;
+}
+
+void EngineController::deleteVoiceLook(const QString& key) {
+    if (!key.startsWith(kCustomVoicePrefix)) {
+        return; // built-in voices stay
+    }
+    const std::string name = key.mid(kCustomVoicePrefix.size()).toStdString();
+    const auto before = settings_.customVoices.size();
+    std::erase_if(settings_.customVoices, [&](const CustomVoice& v) { return v.name == name; });
+    if (settings_.customVoices.size() != before) {
+        logInfo("Voice deleted: " + name);
+        emit voiceLooksChanged();
+        emit paramsChanged();
+        scheduleSave();
+    }
+}
+
+void EngineController::nextVoiceLook(int delta) {
+    const QVariantList list = voiceLooks();
+    if (list.isEmpty()) {
+        return;
+    }
+    const QString current = voiceLook();
+    int index = -1;
+    for (int i = 0; i < list.size(); ++i) {
+        if (list[i].toMap().value("key").toString() == current) {
+            index = i;
+            break;
         }
     }
+    const int count = static_cast<int>(list.size());
+    // From a voice that is not in the list (moved sliders), "next" starts at the first one.
+    const int next = index < 0 ? (delta >= 0 ? 0 : count - 1) : ((index + delta) % count + count) % count;
+    applyVoiceLook(list[next].toMap().value("key").toString());
+}
+
+void EngineController::toggleVoiceEffects() {
+    const VoiceValues current = currentVoiceValues(params_);
+    if (current.natural()) {
+        setVoice(settings_.lastVoice.natural() ? voiceValues(vs::voiceLooks()[1]) : settings_.lastVoice);
+        logInfo("Voice effects on");
+    } else {
+        settings_.lastVoice = current;
+        applyVoiceValues({}, params_);
+        emit paramsChanged();
+        scheduleSave();
+        logInfo("Voice effects off (natural voice)");
+    }
+}
+
+QVariantList EngineController::isolationModels() const {
+    const std::filesystem::path modelsDir =
+        std::filesystem::path(QCoreApplication::applicationDirPath().toStdWString()) / L"models";
+    QVariantList list;
+    for (const IsolationModelInfo& model : vs::isolationModels()) {
+        QVariantMap m;
+        m["id"] = qs(model.id);
+        m["name"] = qs(model.name);
+        m["engine"] = qs(model.engine);
+        m["howItWorks"] = qs(model.howItWorks);
+        m["useWhen"] = qs(model.useWhen);
+        m["badge"] = qs(model.badge);
+        m["delay"] = qs(model.delay);
+        m["cpu"] = qs(model.cpu);
+        m["overlapping"] = qs(model.overlapping);
+        m["installed"] = isolationModelInstalled(model, modelsDir);
+        m["installHint"] = qs(model.installHint);
+        list.append(m);
+    }
+    return list;
+}
+
+void EngineController::setIsolationModel(const QString& id) {
+    const std::string model = id.toStdString();
+    if (findIsolationModel(model) == nullptr || model == settings_.isolationModel) {
+        return;
+    }
+    settings_.isolationModel = model;
+    supervisor_->engine().isolator().setModel(model);
+    emit configChanged();
+    scheduleSave();
 }
 
 QStringList EngineController::effectOrder() const {
@@ -1400,6 +1581,8 @@ void EngineController::refreshIsolation() {
     iso["chunkMs"] = st.framesPerRun * 8;
     iso["threads"] = st.threads;
     iso["light"] = st.light;
+    iso["lightFallback"] = st.lightFallback;
+    iso["model"] = qs(st.model);
     iso["calibrationP50Ms"] = round2(st.calibrationP50Ms);
     iso["calibrationP95Ms"] = round2(st.calibrationP95Ms);
     iso["processorId"] = qs(st.processorId);

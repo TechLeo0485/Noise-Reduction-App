@@ -35,8 +35,9 @@ The checklist disappears once everything is green.
 | Page | What it is for |
 |---|---|
 | **Home** | Is everything working, live levels and delay, and the everyday choices: how you **sound like**, **background noise**, **only my voice**, **steady voice at any distance** and hearing yourself |
-| **Voice** | Shape how you sound: voice look, depth, body, presence, tone, the voice stabilizer and evening out |
-| **Clean-up** | Background noise level and engine, ready-made settings per situation, *Only send my voice* and recording your voice |
+| **Voice** | The voice changer: pick a voice, adjust **Pitch**, **Thickness** and **Presence**, save your own voices, hear yourself; *More controls* holds tone, evening out, limiter and effect order |
+| **Clean-up** | Background noise level and engine, ready-made settings per situation |
+| **Only my voice** | Strict voice isolation, the **isolation model** and recording your voice |
 | **Setup** | Microphone, virtual microphone, headphones, general settings, **Delay**, help; *Advanced* holds processor, speed, buffers, measurements and logging |
 
 The sidebar holds the **On/Off** switch for VoiceStudio, **Mute microphone** and **Help and guide**. The top right
@@ -90,12 +91,12 @@ Your speakers and headphones in the call app stay unchanged.
 
 This is for situations like a job interview where others may talk in the same room.
 
-1. Go to **Clean-up** and click **Start recording** (card *My voice*).
+1. Go to **Only my voice** and click **Start recording** (card *My voice*).
 2. Follow the guide on screen. It changes every 20 seconds: **normal**, **louder**, **quiet**, **higher**, **lower**, **with feeling**, then **free talk**.
    Talk as long as you like (1 to 3 minutes works great, up to 30 minutes), then click **Done**.
    * Be **alone and in a quiet room** while recording.
    * Use the **same microphone** you will use in the call.
-3. Turn on **Strict voice isolation** (card *Only send my voice*, on Clean-up or Home).
+3. Turn on **Strict voice isolation** (card *Only send my voice*, on Only my voice or Home).
 
 The network that recognises you listens to 3 seconds of your voice. After you click **Done**, VoiceStudio tries several 3-second
 samples from different parts of your recording (normal, loud, quiet, high, low...) on the rest of your recording and keeps the
@@ -104,6 +105,18 @@ one that keeps the most of your voice in **every** style. This takes up to about
 **Add more** records more and adds it to what you already recorded. The guide continues with the styles you have not recorded yet,
 and the *My voice* card shows which styles are covered. **Start over** replaces the recording.
 The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** on the *My voice* card to find it.
+
+### Choosing the isolation model
+
+On **Only my voice**, card *Isolation model*. Both models use the same recording of your voice, so you can switch any time
+without recording again. Your microphone is silenced for a moment while the model switches.
+
+| Model | Best for | Delay | CPU | When you talk at the same time as someone else |
+|---|---|---|---|---|
+| **VoxLock** (default) | Best quality: removes other voices even while you talk | ~80 ms | Medium | Removed or turned down |
+| **Light** | Slower computers, or when you rarely talk over others | ~70 ms | Low | Passed with your voice |
+
+Both mute other people while you are silent. If the computer is too slow for VoxLock, VoiceStudio uses Light by itself and says so.
 
 ### What to expect
 
@@ -130,15 +143,22 @@ The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** 
 
 ## 5. Sound settings
 
-* **Sound like** (Home): **Natural**, **Strong & Thick**, **Deep**, **Warm** or **Radio**. On the Voice page you can fine-tune:
-  * **Depth**: a lower (or higher) pitch. Your voice keeps its own tone, so it sounds deeper and stronger, not robotic.
-  * **Body**: a thicker, bigger voice. Move it left for a lighter voice.
+* **Voice changer** (Voice page; the voices are also on Home under *Sound like*): click a voice - **Natural**, **Strong & Thick**,
+  **Deep**, **Warm**, **Radio**, **Clear**, **Lighter** or **Very Deep** - and it is used right away. The **Voice effects** switch
+  turns them off (your natural voice) and back on. Adjust the voice under *Adjust this voice*:
+  * **Pitch**: a lower (or higher) pitch. Your voice keeps its own tone, so it sounds deeper and stronger, not robotic.
+  * **Thickness**: a thicker, bigger voice. Move it left for a lighter voice.
   * **Presence**: keeps a deeper voice clear and forward.
 
+  **Save as my voice** keeps the current voice under a name; it then appears after the built-in voices. Hover a saved
+  voice and click the bin to delete it.
+
   A lower voice would normally pile up bass and sound boomy; VoiceStudio holds the bass back automatically (more the deeper you go),
-  so it sounds strong and thick instead. For strong and thick: 1 to 2 steps of Depth and some Body (that is *Strong & Thick*).
+  so it sounds strong and thick instead. For strong and thick: 1 to 2 steps of Pitch and some Thickness (that is *Strong & Thick*).
   Voice character adds about 35 ms of delay while it is on, and none when it is set to Natural.
 * **Background noise** (Home): *Off*, *Light*, *Balanced* or *Strong*. *Balanced* suits most rooms. Details are on Clean-up.
+* **Clicks and taps** (Clean-up → Advanced noise settings, experimental, off by default): turns down mouse clicks
+  and keys between your words. It catches about half of them and can slightly soften some consonants.
 * **Situation** (Clean-up): ready-made noise and tone settings such as **Interview**, **Natural Voice**, **Gaming** and **Streaming**. Your voice character is kept when you switch.
 * **Steady voice at any distance** (Home or Voice): on by default. Leaning in makes a voice louder and boomier,
   sitting back makes it quieter and thinner - and the voice character would then sound different each time.
@@ -150,7 +170,7 @@ The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** 
 
 ### Check how you sound
 
-On **Home**, click **Record 5 s and play back**. VoiceStudio plays back exactly what other people hear.
+On **Home** or **Voice**, click **Record 5 s and play back**. VoiceStudio plays back exactly what other people hear.
 
 ---
 
@@ -169,6 +189,8 @@ They work everywhere - in a game, in the call app, or while VoiceStudio is hidde
 |---|---|
 | **Ctrl+Alt+Shift+V** | Shows the VoiceStudio window; press it again to hide the window (VoiceStudio keeps running in the tray) |
 | **Ctrl+Alt+Shift+M** | Mutes the microphone, or unmutes it again |
+| **Ctrl+Alt+Shift+N** | Switches to the next voice (built-in voices, then your saved ones) |
+| **Ctrl+Alt+Shift+B** | Turns the voice effects off (natural voice), or back on to the last voice |
 
 To change one, open **Setup → Keyboard shortcuts**, click the keys and press the new combination (Esc cancels).
 Use Ctrl, Alt or Win together with a letter, number or F-key, so the keys keep working for typing in other apps.
@@ -225,7 +247,7 @@ In **Setup → Help and troubleshooting**, click **Copy diagnostics** and paste 
 ## 8. Privacy
 
 * All audio is processed **on your computer** and is never sent anywhere. VoiceStudio does not use the internet.
-* The only audio saved to disk is the voice you record on **Clean-up** (card *My voice*): the full recording and the 3-second sample used by strict isolation (`%LOCALAPPDATA%\VoiceStudio\voice`). **Delete** removes both.
+* The only audio saved to disk is the voice you record on **Only my voice** (card *My voice*): the full recording and the 3-second sample used by strict isolation (`%LOCALAPPDATA%\VoiceStudio\voice`). **Delete** removes both.
 * Logs contain events and device names only.
 
 ---

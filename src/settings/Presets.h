@@ -44,6 +44,28 @@ void applyVoiceLook(const VoiceLook& look, EngineParameters& params);
 // The look the current values match, or nullptr (custom).
 [[nodiscard]] const VoiceLook* matchVoiceLook(const EngineParameters& params);
 
+// The three voice-character values (depth, body, presence). All zero is the natural voice.
+struct VoiceValues {
+    float depthSt = 0.0f;
+    float bodySt = 0.0f;
+    float presenceDb = 0.0f;
+    [[nodiscard]] bool natural() const noexcept;
+    [[nodiscard]] bool matches(const VoiceValues& other) const noexcept;
+};
+// A voice the user saved under their own name (shown after the built-in looks).
+struct CustomVoice {
+    std::string name;
+    VoiceValues values;
+};
+inline constexpr std::size_t kMaxCustomVoices = 24;
+inline constexpr std::size_t kMaxCustomVoiceName = 32;
+
+[[nodiscard]] VoiceValues voiceValues(const VoiceLook& look) noexcept;
+// The current voice-character values (all zero while the character is off).
+[[nodiscard]] VoiceValues currentVoiceValues(const EngineParameters& params);
+// Sets the voice character to `values` (clamped); all zero switches it off (no delay added).
+void applyVoiceValues(const VoiceValues& values, EngineParameters& params);
+
 [[nodiscard]] const std::vector<Preset>& builtInPresets();
 [[nodiscard]] const Preset* findBuiltInPreset(const std::string& name);
 

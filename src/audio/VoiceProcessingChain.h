@@ -3,6 +3,7 @@
 #include "ai/INoiseSuppressionProcessor.h"
 #include "audio/isolation/VoiceIsolator.h"
 #include "core/Parameters.h"
+#include "dsp/ClickSuppressor.h"
 #include "dsp/Compressor.h"
 #include "dsp/DspNoiseSuppressor.h"
 #include "dsp/Equalizer.h"
@@ -78,6 +79,7 @@ private:
     [[nodiscard]] int suppressorLatency(SuppressorKind kind) const noexcept;
 
     HighPassFilter highPass_;
+    ClickSuppressor clickSuppressor_;
     DspNoiseSuppressor dspSuppressor_;
     std::unique_ptr<RnnoiseSuppressor> rnnoise_;
     std::unique_ptr<VoiceIsolator> isolator_;

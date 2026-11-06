@@ -46,6 +46,7 @@ add_library(vs_core STATIC
     src/core/Hotkey.cpp
     src/dsp/Biquad.cpp
     src/dsp/NoiseGate.cpp
+    src/dsp/ClickSuppressor.cpp
     src/dsp/Compressor.cpp
     src/dsp/Limiter.cpp
     src/dsp/Equalizer.cpp
@@ -57,6 +58,7 @@ add_library(vs_core STATIC
     src/ai/voxlock/VoxLockEnrollment.cpp
     src/ai/voxlock/NoiseFloorFilter.cpp
     src/ai/voxlock/SpeakerCheck.cpp
+    src/audio/isolation/IsolationModels.cpp
     src/audio/isolation/VoiceIsolator.cpp
     src/audio/VoiceProcessingChain.cpp
     src/audio/AudioEngine.cpp
@@ -97,6 +99,13 @@ if(VOICESTUDIO_WITH_VOXLOCK)
     target_compile_definitions(vs_core PRIVATE VOICESTUDIO_HAS_VOXLOCK=1)
 endif()
 
+set(VOICESTUDIO_VOICEFILTER_FILE "${CMAKE_SOURCE_DIR}/models/voicefilter/voicefilter_lite.onnx")
+if(EXISTS "${VOICESTUDIO_VOICEFILTER_FILE}")
+    message(STATUS "Lightweight filter model: ${VOICESTUDIO_VOICEFILTER_FILE}")
+else()
+    message(STATUS "Lightweight filter model not found (train it with tools/voicefilter); the app shows it as not installed")
+endif()
+
 # Copies onnxruntime.dll and the VoxLock models next to an executable (models/voxlock/), which is
 # where VoiceIsolator looks for them at runtime.
 function(voicestudio_deploy_voxlock target)
@@ -108,6 +117,14 @@ function(voicestudio_deploy_voxlock target)
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models/voxlock"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VOICESTUDIO_VOXLOCK_FILES} "$<TARGET_FILE_DIR:${target}>/models/voxlock"
         VERBATIM)
+    # The "Lightweight filter" model (VoiceFilter-Lite design) exists only once someone has trained it with
+    # tools/voicefilter and placed it in models/voicefilter/. Without it the app shows the model as not installed.
+    if(EXISTS "${VOICESTUDIO_VOICEFILTER_FILE}")
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models/voicefilter"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${VOICESTUDIO_VOICEFILTER_FILE}" "$<TARGET_FILE_DIR:${target}>/models/voicefilter"
+            VERBATIM)
+    endif()
 endfunction()
 
 # ---- Qt-dependent pieces ----------------------------------------------------------------------
@@ -183,9 +200,14 @@ if(VOICESTUDIO_BUILD_APP)
             ui/components/VoiceIsolationCard.qml
             ui/components/VoiceRecorderCard.qml
             ui/components/DeviceTile.qml
+            ui/components/HearYourselfCard.qml
+            ui/components/IsolationModelPicker.qml
+            ui/components/ModelTile.qml
+            ui/components/VoiceTile.qml
             ui/screens/HomeScreen.qml
             ui/screens/VoiceScreen.qml
             ui/screens/CleanupScreen.qml
+            ui/screens/IsolationScreen.qml
             ui/screens/SetupScreen.qml
             ui/screens/HelpScreen.qml)
 
@@ -241,6 +263,9 @@ if(VOICESTUDIO_BUILD_APP)
     if(VOICESTUDIO_WITH_VOXLOCK)
         install(FILES "${VOICESTUDIO_ORT_DLL}" ${VOICESTUDIO_DML_DLL} DESTINATION .)
         install(FILES ${VOICESTUDIO_VOXLOCK_FILES} DESTINATION models/voxlock)
+        if(EXISTS "${VOICESTUDIO_VOICEFILTER_FILE}")
+            install(FILES "${VOICESTUDIO_VOICEFILTER_FILE}" DESTINATION models/voicefilter)
+        endif()
     endif()
 endif()
 

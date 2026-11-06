@@ -75,9 +75,12 @@ struct IsolationStatus {
     std::vector<ProcessorTrial> trials; // last calibration, one entry per processor measured
     double prepareProgress = 0.0;   // 0..1 while a new voice is being prepared (busy)
     bool voiceCheck = false;        // the speaker check is active (other voices are muted, see VoiceCheck)
-    // Light isolation: the computer is too slow for the model, so the microphone passes the stream unchanged; the
-    // noise filter and the voice check still work (see voxlock::PassThroughChunkModel).
+    // Light isolation: no separation model runs; the microphone passes the stream unchanged, the noise filter and the
+    // voice check still work (see voxlock::PassThroughChunkModel). Either chosen by the user (model "light") or the
+    // fallback when the computer is too slow for the selected model (`lightFallback`).
     bool light = false;
+    bool lightFallback = false;
+    std::string model = "voxlock"; // the selected model (IsolationModels.h)
 };
 
 struct IsolationFrameInfo {
@@ -134,6 +137,9 @@ public:
     // Processors the model may run on (CPU first, then GPUs) and the user's choice: "auto" (measure all, use the
     // best) or one id. Re-calibrates the running voice when this changes. Without a call: CPU only.
     void setProcessors(std::vector<IsolationProcessor> available, std::string preferred);
+    // The model to isolate with (an IsolationModels.h id; unknown ids select the default). Switches the running voice
+    // to it (silence meanwhile, never the microphone); without a voice yet, it is used once one is enrolled.
+    void setModel(std::string id);
     // Upper limit for the delay of the isolated voice behind the microphone (the engine derives it from its overall
     // delay budget). Above it, the backlog is dropped at once instead of being trimmed slowly. Any thread.
     void setMaxLatencyMs(double ms) noexcept;
@@ -211,8 +217,15 @@ private:
     bool prepareVoice(const std::vector<float>& audio16k, std::string& error);
     // Measures the allowed processors with `tensors` and publishes the best model (loader thread).
     bool calibrateAndPublish(const voxlock::EnrollmentTensors& tensors, std::string& error);
-    // The computer cannot run the model in real time: pass the microphone through the stream instead.
+    // Pass the microphone through the stream instead of a model: chosen by the user (`reason` empty), or because the
+    // computer cannot run the selected model in real time.
     void useLightIsolation(const std::string& reason);
+    [[nodiscard]] std::string selectedModel();
+    // A chunk session of model `modelId` (IsolationModels.h) for the current voice (loader thread).
+    [[nodiscard]] std::unique_ptr<voxlock::IChunkModel> createModel(const std::string& modelId,
+                                                                    const voxlock::EnrollmentTensors& tensors,
+                                                                    const voxlock::ChunkModelOptions& options,
+                                                                    std::string& error);
     // The 3 s voice sample for a whole recording (see enroll()). Reports progress as `state` + busy.
     [[nodiscard]] std::vector<float> chooseVoiceSample(const std::vector<float>& audio16k, IsolationState state);
     [[nodiscard]] double savedRecordingSeconds() const;
@@ -238,6 +251,7 @@ private:
     std::mutex processorsMutex_;
     std::vector<IsolationProcessor> processors_{{"cpu", "CPU", -1}};
     std::string preferredProcessor_ = "auto";
+    std::string modelId_ = "voxlock";           // guarded by processorsMutex_
     int currentDmlDevice_ = -1;                 // loader thread only: processor of the published model
     bool haveTensors_ = false;
 

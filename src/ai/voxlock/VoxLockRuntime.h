@@ -51,6 +51,15 @@ public:
     // single-threaded CPU session; nullptr with `error` set if the file is missing or unusable.
     [[nodiscard]] std::unique_ptr<ISpeakerModel> createSpeakerModel(std::string& error);
 
+    // The "Lightweight filter" model: a VoiceFilter-Lite-style network (tools/voicefilter) in
+    // <models>/voicefilter/voicefilter_lite.onnx, conditioned on the user's CAM++ voice print `dvector` (unit length,
+    // as referenceEmbedding() returns it). Same streaming contract as chunk.onnx, so voxlock::Stream runs it:
+    //   wav (1, S = (K-1)*128 + 512), dvector (1, D), h, c (L, 1, H)  ->  frames (1, K, 512), h_out, c_out
+    // where `frames` are the synthesis-windowed (periodic Hann) output frames; the voice print is bound into the
+    // graph as a constant. L * H must fit voxlock::kStateSize. nullptr with `error` set if the file is missing.
+    [[nodiscard]] std::unique_ptr<IChunkModel> createVoiceFilterModel(const std::vector<float>& dvector,
+                                                                      const ChunkModelOptions& options, std::string& error);
+
     [[nodiscard]] std::string description() const;
     // This build and the loaded runtime can run models on GPUs (DirectML).
     [[nodiscard]] static bool hasDirectMl();

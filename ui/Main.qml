@@ -15,14 +15,15 @@ ApplicationWindow {
     color: Theme.background
     font.family: Theme.fontFamily
 
-    // Pages are addressed by key; `index` is the position in the StackLayout below. Four pages in the sidebar:
+    // Pages are addressed by key; `index` is the position in the StackLayout below. Five pages in the sidebar:
     // Home holds the everyday choices, the others the details. Help is opened from the sidebar footer.
     readonly property var allPages: ({
         home:    { title: "Home", icon: "\uE80F", subtitle: "Your voice at a glance and the choices you change most", index: 0 },
-        voice:   { title: "Voice", icon: "\uE9E9", subtitle: "Shape how you sound: look, depth, body, presence and tone", index: 1 },
-        cleanup: { title: "Clean-up", icon: "\uE9D9", subtitle: "Remove background noise and other people's voices", index: 2 },
-        setup:   { title: "Setup", icon: "\uE713", subtitle: "Microphone, virtual microphone, headphones and delay", index: 3 },
-        help:    { title: "Help", icon: "\uE897", subtitle: "How to set up VoiceStudio and use it in your calls", index: 4 }
+        voice:   { title: "Voice", icon: "\uE9E9", subtitle: "Voice changer: pick a voice, adjust it and save your own", index: 1 },
+        cleanup: { title: "Clean-up", icon: "\uE9D9", subtitle: "Remove background noise: fans, keyboards, traffic, hum", index: 2 },
+        isolation: { title: "Only my voice", icon: "\uE716", subtitle: "Remove other people's voices and choose the isolation model", index: 3 },
+        setup:   { title: "Setup", icon: "\uE713", subtitle: "Microphone, virtual microphone, headphones and delay", index: 4 },
+        help:    { title: "Help", icon: "\uE897", subtitle: "How to set up VoiceStudio and use it in your calls", index: 5 }
     })
     // Opens a page by key (used by C++, e.g. the "User Guide" shortcut opens "help").
     function showPage(key) {
@@ -39,7 +40,7 @@ ApplicationWindow {
         }
     }
 
-    readonly property var navKeys: ["home", "voice", "cleanup", "setup"]
+    readonly property var navKeys: ["home", "voice", "cleanup", "isolation", "setup"]
     property string currentKey: "home"
     readonly property var currentInfo: allPages[currentKey] !== undefined ? allPages[currentKey] : allPages.home
 
@@ -297,8 +298,9 @@ ApplicationWindow {
                 HomeScreen { onOpenPage: (key) => window.showPage(key) }  // 0
                 VoiceScreen {}                                            // 1
                 CleanupScreen { onOpenPage: (key) => window.showPage(key) } // 2
-                SetupScreen { onOpenPage: (key) => window.showPage(key) } // 3
-                HelpScreen {}                                             // 4
+                IsolationScreen { onOpenPage: (key) => window.showPage(key) } // 3
+                SetupScreen { onOpenPage: (key) => window.showPage(key) } // 4
+                HelpScreen {}                                             // 5
             }
         }
     }

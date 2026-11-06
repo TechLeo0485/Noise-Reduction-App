@@ -15,8 +15,6 @@ ScreenPage {
     readonly property var iso: backend.isolation
     readonly property bool isolationOn: backend.params.isolationEnabled === true
     readonly property bool stabilizerOn: backend.params.stabilizerEnabled === true
-    readonly property string checkState: backend.voiceCheck.state !== undefined ? backend.voiceCheck.state : "idle"
-    readonly property bool checkBusy: checkState === "recording" || checkState === "playing"
     readonly property color heroTone: !backend.engineEnabled ? Theme.textSecondary
                                       : page.muted ? Theme.danger
                                       : page.allOk ? Theme.success : Theme.warning
@@ -188,7 +186,7 @@ ScreenPage {
             icon: "\uE9E9"
             actions: LinkText { text: "Fine-tune"; onClicked: page.openPage("voice") }
 
-            LookPicker { wide: true; wideColumns: 2 }
+            LookPicker { big: false }
         }
     }
 
@@ -211,13 +209,13 @@ ScreenPage {
             subtitle: "Removes other people talking near you"
             icon: "\uE716"
             actions: LinkText {
-                text: page.iso.enrolled === true ? "My voice" : "Record my voice"
-                onClicked: page.openPage("cleanup")
+                text: page.iso.enrolled === true ? "Models and my voice" : "Record my voice"
+                onClicked: page.openPage("isolation")
             }
             VsSwitch {
                 label: page.isolationOn ? "On - only your voice is sent" : "Off"
                 description: page.iso.enrolled === true ? "Uses the voice you recorded on this computer."
-                             : "Record your voice once on the Clean-up page first."
+                             : "Record your voice once on the Only my voice page first."
                 enabled: page.iso.available === true || page.isolationOn
                 checked: page.isolationOn
                 onToggled: (value) => backend.setParam("isolationEnabled", value)
@@ -250,44 +248,6 @@ ScreenPage {
             StabilizerReadout { visible: page.stabilizerOn && backend.engineRunning }
         }
 
-        Card {
-            Layout.fillHeight: true
-            title: "Hear yourself"
-            subtitle: "Use headphones, not speakers"
-            icon: "\uE7F6"
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                VsButton {
-                    primary: !page.checkBusy
-                    iconText: page.checkBusy ? "\uE71A" : "\uE7C8"
-                    text: page.checkState === "recording" ? "Stop recording"
-                          : page.checkState === "playing" ? "Stop playback"
-                          : "Record 5 s and play back"
-                    enabled: backend.engineRunning || page.checkBusy
-                    onClicked: page.checkBusy ? backend.stopVoiceCheck() : backend.startVoiceCheck(5)
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: backend.voiceCheck.message !== undefined && backend.voiceCheck.message !== ""
-                          ? backend.voiceCheck.message : "Speak for 5 seconds, then listen."
-                    color: page.checkState === "error" ? Theme.warning
-                           : page.checkState === "done" ? Theme.success : Theme.textSecondary
-                    font.pixelSize: Theme.fontSmall
-                    wrapMode: Text.WordWrap
-                }
-            }
-            ProgressBarThin {
-                visible: page.checkState === "recording"
-                value: backend.voiceCheck.progress !== undefined ? backend.voiceCheck.progress : 0
-                barColor: Theme.danger
-            }
-            VsSwitch {
-                label: "Listen live"
-                description: "Hear yourself while you talk. Headphones are chosen in Setup."
-                checked: backend.monitorEnabled
-                onToggled: (value) => backend.monitorEnabled = value
-            }
-        }
+        HearYourselfCard { Layout.fillHeight: true }
     }
 }

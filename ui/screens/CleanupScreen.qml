@@ -3,9 +3,8 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import VoiceStudio
 
-// Everything that removes sound you do not want: background noise (level and engine), ready-made settings
-// per situation, other people's voices (strict isolation and the voice recording it uses) and, collapsed,
-// the filter and gate details.
+// Removing background noise: level and engine, ready-made settings per situation and, collapsed, the filter and
+// gate details. Other people's voices have their own page ("Only my voice", IsolationScreen).
 ScreenPage {
     id: page
 
@@ -131,9 +130,6 @@ ScreenPage {
             }
         }
 
-        VoiceIsolationCard { Layout.fillHeight: true }
-
-        VoiceRecorderCard { Layout.fillHeight: true }
     }
 
     // ---- Details -------------------------------------------------------------------------------------
@@ -152,6 +148,16 @@ ScreenPage {
                 description: "Off passes your voice through unprocessed (the gate and voice settings still apply)"
             }
             ParamSlider { paramKey: "suppressionStrength"; enabled: page.suppressionOn }
+        }
+
+        Expander {
+            title: "Clicks and taps (experimental)"
+            hint: page.p.clickRemovalEnabled === true ? "On, adds 8 ms of delay" : "Off"
+            ParamSwitch {
+                paramKey: "clickRemovalEnabled"
+                description: "Turns down mouse clicks, keys and taps between your words. Experimental: it catches about "
+                             + "half of them and can slightly soften some consonants, so it is off by default."
+            }
         }
 
         Expander {

@@ -44,6 +44,25 @@ TEST(Presets, VoiceLooks) {
     EXPECT_EQ(matchVoiceLook(p), nullptr); // custom
 }
 
+TEST(Presets, VoiceValues) {
+    EngineParameters p;
+    EXPECT_TRUE(currentVoiceValues(p).natural());
+    applyVoiceValues({-2.0f, 1.0f, 3.0f}, p);
+    EXPECT_TRUE(p.getBool(ParamId::PitchEnabled));
+    EXPECT_TRUE(currentVoiceValues(p).matches({-2.0f, 1.0f, 3.0f}));
+    applyVoiceValues({}, p); // all zero: character off, no delay added
+    EXPECT_FALSE(p.getBool(ParamId::PitchEnabled));
+    EXPECT_TRUE(currentVoiceValues(p).natural());
+    // Every look has its own values (no two tiles select the same voice); only Natural is natural.
+    const auto& looks = voiceLooks();
+    for (std::size_t i = 0; i < looks.size(); ++i) {
+        EXPECT_EQ(voiceValues(looks[i]).natural(), i == 0) << looks[i].key;
+        for (std::size_t j = i + 1; j < looks.size(); ++j) {
+            EXPECT_FALSE(voiceValues(looks[i]).matches(voiceValues(looks[j]))) << looks[i].key << " " << looks[j].key;
+        }
+    }
+}
+
 TEST(Presets, CustomRoundTrip) {
     EngineParameters a;
     a.set(ParamId::BassDb, 4.5f);

@@ -1,5 +1,6 @@
 #include "settings/SettingsStore.h"
 
+#include "audio/isolation/IsolationModels.h"
 #include "core/Hotkey.h"
 
 #include <QDir>
@@ -121,6 +122,22 @@ QByteArray SettingsStore::toJson(const AppSettings& s) {
     root["virtualDeviceIds"] = virtualIds;
     root["hotkeyShowWindow"] = QString::fromStdString(s.hotkeyShowWindow);
     root["hotkeyMute"] = QString::fromStdString(s.hotkeyMute);
+    root["hotkeyNextVoice"] = QString::fromStdString(s.hotkeyNextVoice);
+    root["hotkeyVoiceOnOff"] = QString::fromStdString(s.hotkeyVoiceOnOff);
+    root["isolationModel"] = QString::fromStdString(s.isolationModel);
+    QJsonArray voices;
+    for (const CustomVoice& voice : s.customVoices) {
+        QJsonObject v;
+        v["name"] = QString::fromStdString(voice.name);
+        v["depthSt"] = static_cast<double>(voice.values.depthSt);
+        v["bodySt"] = static_cast<double>(voice.values.bodySt);
+        v["presenceDb"] = static_cast<double>(voice.values.presenceDb);
+        voices.append(v);
+    }
+    root["customVoices"] = voices;
+    root["lastVoice"] = QJsonObject{{"depthSt", static_cast<double>(s.lastVoice.depthSt)},
+                                    {"bodySt", static_cast<double>(s.lastVoice.bodySt)},
+                                    {"presenceDb", static_cast<double>(s.lastVoice.presenceDb)}};
     root["checkForUpdates"] = s.checkForUpdates;
     root["skippedVersion"] = QString::fromStdString(s.skippedVersion);
     root["lastRunVersion"] = QString::fromStdString(s.lastRunVersion);
@@ -207,6 +224,41 @@ bool SettingsStore::fromJson(const QByteArray& json, AppSettings& out, QString* 
     s.processor = root.value("processor").toString(QStringLiteral("auto")).toStdString();
     s.hotkeyShowWindow = loadHotkey(root, "hotkeyShowWindow", AppSettings::kDefaultHotkeyShowWindow);
     s.hotkeyMute = loadHotkey(root, "hotkeyMute", AppSettings::kDefaultHotkeyMute);
+    s.hotkeyNextVoice = loadHotkey(root, "hotkeyNextVoice", AppSettings::kDefaultHotkeyNextVoice);
+    s.hotkeyVoiceOnOff = loadHotkey(root, "hotkeyVoiceOnOff", AppSettings::kDefaultHotkeyVoiceOnOff);
+    {
+        const std::string model = root.value("isolationModel").toString().toStdString();
+        if (findIsolationModel(model) != nullptr) {
+            s.isolationModel = model;
+        }
+    }
+    // Voice values are clamped to the ranges of their parameters.
+    const auto readVoice = [](const QJsonObject& v, VoiceValues& out) {
+        out.depthSt = clampParam(ParamId::PitchSemitones, static_cast<float>(v.value("depthSt").toDouble(0.0)));
+        out.bodySt = clampParam(ParamId::PitchBodySt, static_cast<float>(v.value("bodySt").toDouble(0.0)));
+        out.presenceDb = clampParam(ParamId::PitchPresenceDb, static_cast<float>(v.value("presenceDb").toDouble(0.0)));
+    };
+    for (const QJsonValue& value : root.value("customVoices").toArray()) {
+        const QJsonObject v = value.toObject();
+        const QString name = v.value("name").toString().trimmed().left(static_cast<qsizetype>(kMaxCustomVoiceName));
+        if (name.isEmpty() || s.customVoices.size() >= kMaxCustomVoices) {
+            continue;
+        }
+        CustomVoice voice;
+        voice.name = name.toStdString();
+        readVoice(v, voice.values);
+        if (std::none_of(s.customVoices.begin(), s.customVoices.end(),
+                         [&](const CustomVoice& other) { return other.name == voice.name; })) {
+            s.customVoices.push_back(std::move(voice));
+        }
+    }
+    if (root.value("lastVoice").isObject()) {
+        VoiceValues last;
+        readVoice(root.value("lastVoice").toObject(), last);
+        if (!last.natural()) {
+            s.lastVoice = last;
+        }
+    }
     s.checkForUpdates = root.value("checkForUpdates").toBool(true);
     s.skippedVersion = root.value("skippedVersion").toString().left(32).toStdString();
     // Settings written before VoiceStudio knew this field come from a version that is older than this one.

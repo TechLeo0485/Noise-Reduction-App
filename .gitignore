@@ -50,3 +50,8 @@ driver/packages/
 driver/**/x64/
 # Never commit a driver-signing private key
 *.pfx
+
+# Python environment for tools/voicefilter (training, export)
+.venv/
+# Trained Lightweight filter models are build inputs, not source (see tools/voicefilter/README.md)
+models/voicefilter/*.onnx

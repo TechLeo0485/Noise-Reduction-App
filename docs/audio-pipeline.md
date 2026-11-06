@@ -12,6 +12,8 @@ Physical microphone
         NaN/Inf guard
         input gain (ramped)
         high-pass, 4th-order Butterworth (default 80 Hz)
+        click remover (optional, experimental, off by default; 8 ms while on): 1.5 kHz Linkwitz-Riley split, the
+            high band turned down in short transients that jump 12 dB above its 30 ms peak and fade within 6 ms
         strict voice isolation (optional): frame → SPSC ring → isolation worker thread
             [48 → 16 kHz, VoxLock INT8 Full chunk.onnx (ONNX Runtime CPU), 16 → 48 kHz]
             → SPSC ring → frame (isolated voice or silence; see below)

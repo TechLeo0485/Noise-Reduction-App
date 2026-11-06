@@ -19,6 +19,7 @@
 //
 //   vs_isolation --similarity --enroll me.wav --in other.wav
 //       Voice check: similarity of each 1.5 s piece of `other.wav` to the voice in `me.wav` (CAM++).
+//   --model X         real-time run: isolation model (IsolationModels.h): voxlock (default) or light
 //   --processor X     real-time run: where isolation runs - auto (measure CPU and GPUs, default), cpu, or a GPU id
 //                     ("gpu:10de-1c82-0"; printed at the start)
 //
@@ -196,7 +197,8 @@ int runOffline(const std::vector<float>& voice16k, const std::vector<float>& inp
 }
 
 int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& input48k, const std::string& outPath,
-                bool isolatorOnly, const std::vector<std::pair<std::string, float>>& overrides, const std::string& processor) {
+                bool isolatorOnly, const std::vector<std::pair<std::string, float>>& overrides, const std::string& processor,
+                const std::string& model) {
     const std::filesystem::path dir = exeDirectory();
     VoiceProcessingChain chain;
     EngineParameters params;
@@ -230,6 +232,7 @@ int runRealtime(const std::vector<float>& voice16k, const std::vector<float>& in
         std::printf("ignored: %s\n", i.c_str());
     }
     isolator.setProcessors(processors, processor);
+    isolator.setModel(model);
 
     const std::int64_t t0 = HighResClock::now();
     isolator.initialize(dir, dir / L"models" / L"voxlock", {});
@@ -355,6 +358,7 @@ int main(int argc, char** argv) {
     std::vector<std::pair<std::string, float>> overrides;
     int k = 2;
     std::string processor = "auto";
+    std::string model = "voxlock";
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string(); };
@@ -369,6 +373,7 @@ int main(int argc, char** argv) {
         else if (a == "--log") Logger::instance().open(next());
         else if (a == "--debug") Logger::instance().setLevel(LogLevel::Debug);
         else if (a == "--processor") processor = next();
+        else if (a == "--model") model = next();
         else if (a == "--set") {
             const std::string kv = next();
             const auto eq = kv.find('=');
@@ -388,5 +393,5 @@ int main(int argc, char** argv) {
     if (similarity) {
         return runSimilarity(voice16k, input);
     }
-    return offline ? runOffline(voice16k, input, outPath, k, spin) : runRealtime(voice16k, input, outPath, isolatorOnly, overrides, processor);
+    return offline ? runOffline(voice16k, input, outPath, k, spin) : runRealtime(voice16k, input, outPath, isolatorOnly, overrides, processor, model);
 }

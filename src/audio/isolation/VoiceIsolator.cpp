@@ -1,6 +1,7 @@
 #include "audio/isolation/VoiceIsolator.h"
 
 #include "ai/voxlock/VoxLockEnrollment.h"
+#include "audio/isolation/IsolationModels.h"
 #include "core/RealtimeThread.h"
 #include "diagnostics/Logger.h"
 
@@ -286,10 +287,13 @@ void VoiceIsolator::initialize(const std::filesystem::path& runtimeDir, const st
         std::error_code ec;
         if (!enrollmentFile_.empty() && std::filesystem::exists(enrollmentFile_, ec)) {
             std::vector<float> voice;
-            if (voxlock::loadVoiceSample(enrollmentFile_, voice, error) && prepareVoice(voice, error)) {
+            if (voxlock::loadVoiceSample(enrollmentFile_, voice, error)) {
+                // The voice print before the model: the "Lightweight filter" model is built from it.
                 std::vector<float> recording;
                 std::string ignored;
                 updateSpeakerReference(voxlock::loadVoiceSample(recordingFile(), recording, ignored) ? recording : voice);
+            }
+            if (!voice.empty() && prepareVoice(voice, error)) {
                 std::string microphone;
                 std::ifstream in(microphoneFile());
                 std::getline(in, microphone);
@@ -357,12 +361,12 @@ void VoiceIsolator::enroll(std::vector<float> audio16k, std::string microphone, 
         }
         setStatus(before, "Preparing your voice...", true);
         const std::vector<float> sample = chooseVoiceSample(audio, before);
+        updateSpeakerReference(audio); // before the model: the "Lightweight filter" is built from the voice print
         if (!prepareVoice(sample, error)) {
             logError("Voice enrollment failed: " + error);
             setStatus(before, "Voice enrollment failed: " + error, false);
             return;
         }
-        updateSpeakerReference(audio);
         // Saved: the 3 s the model uses (loads exactly as enrolled) and the whole recording (for adding more).
         if (!enrollmentFile_.empty() && !voxlock::saveVoiceSample(enrollmentFile_, sample, error)) {
             logError("Saving the voice sample failed: " + error);
@@ -601,8 +605,74 @@ void VoiceIsolator::setProcessors(std::vector<IsolationProcessor> available, std
     });
 }
 
+void VoiceIsolator::setModel(std::string id) {
+    if (findIsolationModel(id) == nullptr) {
+        id = kDefaultIsolationModel;
+    }
+    {
+        std::lock_guard lock(processorsMutex_);
+        if (id == modelId_) {
+            return;
+        }
+        modelId_ = id;
+    }
+    {
+        std::lock_guard lock(statusMutex_);
+        status_.model = id;
+    }
+    statusRevision_.fetch_add(1, std::memory_order_acq_rel);
+    logInfo("Voice isolation model: " + id);
+    if (state() == IsolationState::NotBuilt) {
+        return;
+    }
+    post([this] {
+        if (!haveTensors_ || testFactory_) {
+            return; // used by the next voice preparation
+        }
+        const IsolationState before = state();
+        setStatus(before, "Switching the isolation model...", true);
+        std::string error;
+        if (!calibrateAndPublish(tensors_, error)) {
+            logError("Voice isolation: switching the model failed: " + error);
+            setStatus(before, "Voice isolation could not switch the model: " + error, false);
+        }
+    });
+}
+
+std::unique_ptr<voxlock::IChunkModel> VoiceIsolator::createModel(const std::string& modelId,
+                                                                const voxlock::EnrollmentTensors& tensors,
+                                                                const voxlock::ChunkModelOptions& options, std::string& error) {
+#if defined(VOICESTUDIO_HAS_VOXLOCK)
+    if (modelId == "voicefilter") {
+        std::vector<float> voicePrint;
+        {
+            std::lock_guard lock(speakerMutex_);
+            voicePrint = speakerReference_;
+        }
+        return runtime_->createVoiceFilterModel(voicePrint, options, error);
+    }
+    return runtime_->createChunkModel(tensors, options, error);
+#else
+    (void)modelId;
+    (void)tensors;
+    (void)options;
+    error = "not included in this build";
+    return nullptr;
+#endif
+}
+
+std::string VoiceIsolator::selectedModel() {
+    std::lock_guard lock(processorsMutex_);
+    return modelId_;
+}
+
 bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensors, std::string& error) {
 #if defined(VOICESTUDIO_HAS_VOXLOCK)
+    const std::string modelId = selectedModel();
+    if (modelId == "light") {
+        useLightIsolation({}); // chosen: no separation model to measure
+        return true;
+    }
     std::vector<IsolationProcessor> candidates;
     std::string preferred;
     {
@@ -647,7 +717,7 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
                 options.threads = threads;
                 options.dmlDevice = processor.dmlDevice;
                 std::string createError;
-                auto model = runtime_->createChunkModel(tensors, options, createError);
+                auto model = createModel(modelId, tensors, options, createError);
                 if (!model) {
                     trial.error = createError;
                     break;
@@ -762,13 +832,14 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
     publish(std::move(models[static_cast<std::size_t>(chosen)]), t.framesPerRun);
     currentDmlDevice_ = processor.dmlDevice;
     health_.clear();
-    logInfo("Voice isolation runs on " + processor.name + " with " + std::to_string(t.framesPerRun * 8) + " ms chunks" +
+    logInfo("Voice isolation (" + modelId + ") runs on " + processor.name + " with " + std::to_string(t.framesPerRun * 8) + " ms chunks" +
             (preferred == "auto" ? " (chosen automatically)" : ""));
     {
         std::lock_guard lock(statusMutex_);
         status_.framesPerRun = t.framesPerRun;
         status_.threads = t.threads;
         status_.light = false;
+        status_.lightFallback = false;
         status_.calibrationP50Ms = t.p50Ms;
         status_.calibrationP95Ms = t.p95Ms;
         status_.processorId = processor.id;
@@ -842,22 +913,28 @@ void VoiceIsolator::useLightIsolation(const std::string& reason) {
     publish(std::make_unique<voxlock::PassThroughChunkModel>(kChunkSizes[0]), kChunkSizes[0]);
     currentDmlDevice_ = -1;
     health_.clear();
-    logWarning("Voice isolation: this computer is too slow for the model (" + reason + "); using light isolation");
-    bool voiceCheck = false;
+    const bool chosen = reason.empty();
+    if (chosen) {
+        logInfo("Voice isolation: light isolation (chosen)");
+    } else {
+        logWarning("Voice isolation: this computer is too slow for the model (" + reason + "); using light isolation");
+    }
     {
         std::lock_guard lock(statusMutex_);
         status_.light = true;
+        status_.lightFallback = !chosen;
         status_.framesPerRun = kChunkSizes[0];
         status_.threads = 0;
         status_.processorId = "light";
         status_.processorName = "Light isolation (no model)";
-        voiceCheck = status_.voiceCheck;
     }
+    // Whether the voice check runs is shown on its own (status_.voiceCheck): its reference is often built only after
+    // this point.
+    const std::string what = "other voices are muted while you are silent (not while you talk over them), and steady "
+                             "background noise is removed.";
     setStatus(IsolationState::Ready,
-              std::string("This computer is too slow for full isolation, so VoiceStudio uses light isolation: "
-                          "background noise is removed") +
-                  (voiceCheck ? " and other voices are muted while you are silent (not while you talk over them)."
-                              : ", but other voices are not."),
+              chosen ? "Light isolation: " + what
+                     : "This computer is too slow for full isolation, so VoiceStudio uses light isolation: " + what,
               false);
 }
 
@@ -923,7 +1000,7 @@ void VoiceIsolator::monitor() {
         options.framesPerRun = next;
         options.threads = currentDmlDevice_ >= 0 ? 1 : std::max(1, st.threads);
         options.dmlDevice = currentDmlDevice_;
-        model = runtime_->createChunkModel(tensors_, options, error);
+        model = createModel(selectedModel(), tensors_, options, error);
 #endif
     }
     if (!model) {

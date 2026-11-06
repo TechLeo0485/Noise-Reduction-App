@@ -26,6 +26,8 @@ namespace {
 constexpr const char* kEnrollFile = "enroll.onnx";
 constexpr const char* kChunkFile = "chunk_int8_full.onnx";
 constexpr const char* kSpeakerFile = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
+// Relative to the models folder (the VoxLock files are in models/voxlock).
+constexpr const char* kVoiceFilterFile = "voicefilter/voicefilter_lite.onnx";
 
 // One ONNX Runtime per process. Deliberately never unloaded: sessions may still be finishing on other
 // threads during shutdown, and unloading the DLL then would crash.
@@ -146,6 +148,31 @@ Ort::SessionOptions baseOptions(int threads, bool allowSpinning) {
     return so;
 }
 
+// Adds the DirectML engine for GPU `device` (DXGI adapter index) to `so`.
+bool appendDirectMl(Ort::SessionOptions& so, int device, std::string& error) {
+#if defined(VOICESTUDIO_HAS_DIRECTML)
+    if (!ortProcess().directMl) {
+        error = "DirectML.dll could not be loaded";
+        return false;
+    }
+    // DirectML requirements: no memory pattern optimisation, sequential execution (set in baseOptions).
+    so.DisableMemPattern();
+    const OrtDmlApi* dml = nullptr;
+    Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml)));
+    if (dml == nullptr) {
+        error = "this ONNX Runtime has no DirectML engine";
+        return false;
+    }
+    Ort::ThrowOnError(dml->SessionOptionsAppendExecutionProvider_DML(so, device));
+    return true;
+#else
+    (void)so;
+    (void)device;
+    error = "this build has no GPU engine (DirectML)";
+    return false;
+#endif
+}
+
 class OrtChunkModel final : public IChunkModel {
 public:
     OrtChunkModel(Ort::Session session, int framesPerRun)
@@ -183,6 +210,58 @@ public:
 private:
     Ort::Session session_;
     int framesPerRun_;
+    Ort::MemoryInfo memory_;
+    Ort::RunOptions runOptions_;
+    std::array<std::int64_t, 2> wavShape_{};
+    std::array<std::int64_t, 3> framesShape_{};
+};
+
+// The "Lightweight filter" (VoiceFilter-Lite design, tools/voicefilter): same streaming contract as chunk.onnx, but
+// a smaller LSTM state of shape (L, 1, H) kept in the first L*H values of the stream's state buffers, and output
+// frames that are plain synthesis-windowed audio (Stream expects them divided by kOutputGain).
+class OrtVoiceFilterModel final : public IChunkModel {
+public:
+    OrtVoiceFilterModel(Ort::Session session, int framesPerRun, std::array<std::int64_t, 3> stateShape)
+        : session_(std::move(session)), framesPerRun_(framesPerRun), stateShape_(stateShape),
+          stateCount_(static_cast<std::size_t>(stateShape[0] * stateShape[1] * stateShape[2])),
+          memory_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
+        wavShape_ = {1, chunkInputSamples(framesPerRun)};
+        framesShape_ = {1, framesPerRun, kNfft};
+    }
+
+    [[nodiscard]] int framesPerRun() const noexcept override { return framesPerRun_; }
+
+    bool run(const float* wav, const float* hIn, const float* cIn, float* frames, float* hOut, float* cOut) noexcept override {
+        try {
+            std::array<Ort::Value, 3> inputs{
+                Ort::Value::CreateTensor<float>(memory_, const_cast<float*>(wav), static_cast<std::size_t>(wavShape_[1]),
+                                                wavShape_.data(), wavShape_.size()),
+                Ort::Value::CreateTensor<float>(memory_, const_cast<float*>(hIn), stateCount_, stateShape_.data(), stateShape_.size()),
+                Ort::Value::CreateTensor<float>(memory_, const_cast<float*>(cIn), stateCount_, stateShape_.data(), stateShape_.size())};
+            const std::size_t frameCount = static_cast<std::size_t>(framesPerRun_) * kNfft;
+            std::array<Ort::Value, 3> outputs{
+                Ort::Value::CreateTensor<float>(memory_, frames, frameCount, framesShape_.data(), framesShape_.size()),
+                Ort::Value::CreateTensor<float>(memory_, hOut, stateCount_, stateShape_.data(), stateShape_.size()),
+                Ort::Value::CreateTensor<float>(memory_, cOut, stateCount_, stateShape_.data(), stateShape_.size())};
+            static constexpr std::array<const char*, 3> inputNames{"wav", "h", "c"};
+            static constexpr std::array<const char*, 3> outputNames{"frames", "h_out", "c_out"};
+            session_.Run(runOptions_, inputNames.data(), inputs.data(), inputs.size(), outputNames.data(), outputs.data(),
+                         outputs.size());
+            constexpr float kToStream = 1.0f / kOutputGain;
+            for (std::size_t i = 0; i < frameCount; ++i) {
+                frames[i] *= kToStream;
+            }
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+private:
+    Ort::Session session_;
+    int framesPerRun_;
+    std::array<std::int64_t, 3> stateShape_;
+    std::size_t stateCount_;
     Ort::MemoryInfo memory_;
     Ort::RunOptions runOptions_;
     std::array<std::int64_t, 2> wavShape_{};
@@ -249,6 +328,7 @@ struct Runtime::Impl {
     std::filesystem::path modelDirectory;
     std::unique_ptr<Ort::Session> enrollSession;
     std::vector<char> chunkModelBytes; // kept to bind each new enrollment into a fresh session
+    std::vector<char> voiceFilterBytes; // read on first use
 };
 
 Runtime::Runtime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -335,30 +415,63 @@ std::unique_ptr<IChunkModel> Runtime::createChunkModel(const EnrollmentTensors& 
         // Static shapes let the optimiser fold the remaining shape arithmetic as well.
         so.AddFreeDimensionOverrideByName("S", chunkInputSamples(k));
         so.AddFreeDimensionOverrideByName("K", k);
-        if (options.dmlDevice >= 0) {
-#if defined(VOICESTUDIO_HAS_DIRECTML)
-            if (!ortProcess().directMl) {
-                error = "DirectML.dll could not be loaded";
-                return nullptr;
-            }
-            // DirectML requirements: no memory pattern optimisation, sequential execution (set in baseOptions).
-            so.DisableMemPattern();
-            const OrtDmlApi* dml = nullptr;
-            Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml)));
-            if (dml == nullptr) {
-                error = "this ONNX Runtime has no DirectML engine";
-                return nullptr;
-            }
-            Ort::ThrowOnError(dml->SessionOptionsAppendExecutionProvider_DML(so, options.dmlDevice));
-#else
-            error = "this build has no GPU engine (DirectML)";
+        if (options.dmlDevice >= 0 && !appendDirectMl(so, options.dmlDevice, error)) {
             return nullptr;
-#endif
         }
         Ort::Session session(*impl_->env, bound.data(), bound.size(), so);
         return std::make_unique<OrtChunkModel>(std::move(session), k);
     } catch (const std::exception& e) {
         error = std::string("Cannot load chunk_int8_full.onnx: ") + e.what();
+        return nullptr;
+    }
+}
+
+std::unique_ptr<IChunkModel> Runtime::createVoiceFilterModel(const std::vector<float>& dvector,
+                                                             const ChunkModelOptions& options, std::string& error) {
+    const int k = std::clamp(options.framesPerRun, 1, 16);
+    if (dvector.empty()) {
+        error = "no voice print yet (record your voice)";
+        return nullptr;
+    }
+    if (impl_->voiceFilterBytes.empty() &&
+        !readFile(impl_->modelDirectory.parent_path() / kVoiceFilterFile, impl_->voiceFilterBytes, error)) {
+        return nullptr;
+    }
+    std::vector<char> bound;
+    const std::vector<ConstantTensor> constants{{"dvector", {1, static_cast<std::int64_t>(dvector.size())}, dvector.data()}};
+    if (!bindInputsAsConstants(impl_->voiceFilterBytes, constants, bound, error)) {
+        error = "Cannot prepare voicefilter_lite.onnx: " + error;
+        return nullptr;
+    }
+    try {
+        Ort::SessionOptions so = baseOptions(options.threads, options.allowSpinning);
+        so.AddFreeDimensionOverrideByName("S", chunkInputSamples(k));
+        so.AddFreeDimensionOverrideByName("K", k);
+        if (options.dmlDevice >= 0 && !appendDirectMl(so, options.dmlDevice, error)) {
+            return nullptr;
+        }
+        Ort::Session session(*impl_->env, bound.data(), bound.size(), so);
+        // The LSTM state shape comes from the model (h: (layers, 1, hidden)).
+        std::array<std::int64_t, 3> stateShape{};
+        bool found = false;
+        Ort::AllocatorWithDefaultOptions allocator;
+        for (std::size_t i = 0; i < session.GetInputCount(); ++i) {
+            if (std::string(session.GetInputNameAllocated(i, allocator).get()) != "h") {
+                continue;
+            }
+            const std::vector<std::int64_t> dims = session.GetInputTypeInfo(i).GetTensorTypeAndShapeInfo().GetShape();
+            if (dims.size() == 3 && dims[0] > 0 && dims[1] == 1 && dims[2] > 0) {
+                stateShape = {dims[0], dims[1], dims[2]};
+                found = true;
+            }
+        }
+        if (!found || static_cast<std::size_t>(stateShape[0] * stateShape[2]) > kStateSize) {
+            error = "voicefilter_lite.onnx has no usable state input h (layers, 1, hidden)";
+            return nullptr;
+        }
+        return std::make_unique<OrtVoiceFilterModel>(std::move(session), k, stateShape);
+    } catch (const std::exception& e) {
+        error = std::string("Cannot load voicefilter_lite.onnx: ") + e.what();
         return nullptr;
     }
 }

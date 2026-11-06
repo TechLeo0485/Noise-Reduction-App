@@ -13,6 +13,7 @@ VoiceProcessingChain::VoiceProcessingChain()
     : rnnoise_(RnnoiseSuppressor::create()), isolator_(std::make_unique<VoiceIsolator>()) {
     const auto rate = static_cast<float>(kSampleRate);
     highPass_.prepare(rate, kFrameSize);
+    clickSuppressor_.prepare(rate, kFrameSize);
     gate_.prepare(rate, kFrameSize);
     stabilizer_.prepare(rate, kFrameSize);
     equalizer_.prepare(rate, kFrameSize);
@@ -41,6 +42,7 @@ bool VoiceProcessingChain::isAvailable(SuppressorKind kind) const noexcept {
 
 void VoiceProcessingChain::reset() noexcept {
     highPass_.reset();
+    clickSuppressor_.reset();
     dspSuppressor_.reset();
     if (rnnoise_) {
         rnnoise_->reset();
@@ -99,7 +101,7 @@ int VoiceProcessingChain::suppressorLatency(SuppressorKind kind) const noexcept 
 
 int VoiceProcessingChain::maxLatencyWithoutIsolationSamples() const noexcept {
     return std::max(suppressorLatency(SuppressorKind::RNNoise), suppressorLatency(SuppressorKind::DspOnly)) +
-           pitch_.activeLatencySamples();
+           pitch_.activeLatencySamples() + ClickSuppressor::kLatencySamples;
 }
 
 IAudioProcessor* VoiceProcessingChain::effectFor(EffectSlot slot) noexcept {
@@ -127,6 +129,11 @@ void VoiceProcessingChain::process(float* frame, const EngineParameters& params,
     // 2. High-pass.
     highPass_.updateParameters(params);
     highPass_.process(frame, n);
+
+    // 2a. Click remover: mouse clicks, keys and taps, before isolation and noise suppression (VoxLock keeps
+    //     transients next to the voice, and the gate is held open while the user talks). 8 ms delay while on.
+    clickSuppressor_.updateParameters(params);
+    clickSuppressor_.process(frame, n);
 
     // 2b. Strict voice isolation. While enabled the frame is the isolated voice or silence, never the
     //     microphone signal (the model runs on the isolator's worker thread; this call never blocks).
@@ -216,7 +223,8 @@ void VoiceProcessingChain::process(float* frame, const EngineParameters& params,
     diag.outputPeak = peakAbs(frame, n);
     diag.outputRms = rms(frame, n);
     diag.algorithmicLatencySamples =
-        suppressorLatency(currentSuppressor_) + pitch_.latencySamples() + diag.isolationLatencySamples;
+        suppressorLatency(currentSuppressor_) + pitch_.latencySamples() + diag.isolationLatencySamples +
+        clickSuppressor_.latencySamples();
 }
 
 } // namespace vs

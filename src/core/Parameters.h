@@ -61,6 +61,9 @@ enum class ParamId : std::uint16_t {
     // Voice stabilizer: same level and tone whether the speaker is close to the microphone or further away.
     StabilizerEnabled,
 
+    // Click remover (see ClickSuppressor): mouse clicks, keys and taps between words. Experimental, off by default.
+    ClickRemovalEnabled,
+
     Count
 };
 

@@ -332,7 +332,7 @@ ScreenPage {
                     color: Theme.textSecondary
                     font.pixelSize: 11
                     text: "Privacy: everything runs on this computer. Nothing is uploaded, there is no account or tracking. "
-                          + "Only the voice you record on the Clean-up page is saved, in its own folder. The only "
+                          + "Only the voice you record on the Only my voice page is saved, in its own folder. The only "
                           + "connection VoiceStudio makes is the update check with GitHub (below), which you can turn off."
                 }
             }

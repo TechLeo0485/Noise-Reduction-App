@@ -16,7 +16,8 @@ namespace vs {
 
 class EngineController;
 
-// System-wide keyboard shortcuts (RegisterHotKey): show / hide the window, mute / unmute the microphone. They work
+// System-wide keyboard shortcuts (RegisterHotKey): show / hide the window, mute / unmute the microphone, switch
+// to the next voice and turn the voice effects off / on. They work
 // while another app has the focus and while the window is hidden in the tray. The keys are stored in the
 // settings (EngineController::hotkey()); the Setup page changes them by capturing the next key press.
 class GlobalHotkeys : public QObject, public QAbstractNativeEventFilter {
@@ -75,7 +76,7 @@ private:
     QQuickWindow* window_ = nullptr;
     void* hwnd_ = nullptr;
     std::function<void()> toggleWindow_;
-    std::array<Action, 2> actions_;
+    std::array<Action, 4> actions_;
     QString capturing_;
     QString message_;
 };

@@ -24,6 +24,7 @@ void makeTransparent(EngineParameters& p) {
     p.set(ParamId::CompressorEnabled, 0);
     p.set(ParamId::LimiterEnabled, 0);
     p.set(ParamId::StabilizerEnabled, 0);
+    p.set(ParamId::ClickRemovalEnabled, 0);
 }
 
 std::vector<float> processAll(VoiceProcessingChain& chain, EngineParameters& p, std::vector<float> x) {

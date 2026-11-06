@@ -45,7 +45,9 @@ GlobalHotkeys::GlobalHotkeys(EngineController& controller, QObject* parent)
     : QObject(parent),
       controller_(controller),
       actions_{{{"showWindow", "Show or hide VoiceStudio", AppSettings::kDefaultHotkeyShowWindow},
-                {"mute", "Mute or unmute the microphone", AppSettings::kDefaultHotkeyMute}}} {
+                {"mute", "Mute or unmute the microphone", AppSettings::kDefaultHotkeyMute},
+                {"nextVoice", "Switch to the next voice", AppSettings::kDefaultHotkeyNextVoice},
+                {"voiceOnOff", "Voice effects off / on (natural voice)", AppSettings::kDefaultHotkeyVoiceOnOff}}} {
     connect(&controller_, &EngineController::hotkeysChanged, this, [this] {
         if (capturing_.isEmpty()) {
             registerAll();
@@ -252,6 +254,10 @@ void GlobalHotkeys::trigger(int index) {
         const bool muted = controller_.params().value(QStringLiteral("masterMute")).toBool();
         controller_.setParam(QStringLiteral("masterMute"), !muted);
         logInfo(muted ? "Microphone unmuted (shortcut)" : "Microphone muted (shortcut)");
+    } else if (action == "nextVoice") {
+        controller_.nextVoiceLook(1);
+    } else if (action == "voiceOnOff") {
+        controller_.toggleVoiceEffects();
     }
 }
 
