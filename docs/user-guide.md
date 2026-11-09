@@ -108,15 +108,20 @@ The whole recording is saved as `my_voice_recording.wav`. Click **Open folder** 
 
 ### Choosing the isolation model
 
-On **Only my voice**, card *Isolation model*. Both models use the same recording of your voice, so you can switch any time
+On **Only my voice**, card *Isolation model*. All models use the same recording of your voice, so you can switch any time
 without recording again. Your microphone is silenced for a moment while the model switches.
 
-| Model | Best for | Delay | CPU | When you talk at the same time as someone else |
-|---|---|---|---|---|
-| **VoxLock** (default) | Best quality: removes other voices even while you talk | ~80 ms | Medium | Removed or turned down |
-| **Light** | Slower computers, or when you rarely talk over others | ~70 ms | Low | Passed with your voice |
+| Model | Technology | Best for | Delay | CPU | When you talk at the same time as someone else |
+|---|---|---|---|---|---|
+| **Full isolation** (default) | VoxLock neural network | Best quality: removes other voices even while you talk | ~80 ms | Medium | Removed or turned down |
+| **Lightweight filter** | VoiceFilter-Lite design (Google) | Laptops too slow for Full isolation | ~70 ms | Low | Turned down |
+| **Voice check only** | CAM++ speaker check, no separation | Very slow computers, or rooms where others rarely talk over you | ~70 ms | Very low | Passed with your voice |
 
-Both mute other people while you are silent. If the computer is too slow for VoxLock, VoiceStudio uses Light by itself and says so.
+All of them mute other people while you are silent. If the computer is too slow for the selected model, VoiceStudio uses
+*Voice check only* by itself and says so.
+
+The **Lightweight filter** needs a trained model file. Google did not publish one, so it shows *Needs model file* until one
+is trained with `tools\voicefilter` (see its README) and placed in `models\voicefilter\`.
 
 ### What to expect
 

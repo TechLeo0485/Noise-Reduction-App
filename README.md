@@ -30,7 +30,8 @@ cable as their microphone. Everything runs on your machine: no cloud, no account
 | Advanced AI (ONNX Runtime, GPU/NPU) | **Not in this build**: UI shows it as unavailable |
 | Runs in the notification area: closing the window keeps processing; optional start with Windows (`--minimized`) | Implemented |
 | Strict voice isolation (removes other people's voices, VoxLock INT8 Full, CPU) | Implemented: record your voice once; fail-closed (silence, never the raw microphone) |
-| Isolation model choice: VoxLock (best quality) or Light (voice check only, lowest CPU); one recording for all models | Implemented |
+| Isolation model choice: Full isolation (VoxLock), Lightweight filter (VoiceFilter-Lite design), Voice check only; one recording for all models | Implemented; the Lightweight filter needs a model trained with `tools/voicefilter` (none published) |
+| Click remover for mouse clicks and keys between words | Experimental, off by default |
 | Voice changer: 8 voices, Pitch / Thickness / Presence, saved custom voices, next-voice and effects on/off shortcuts | Implemented |
 | Custom virtual audio driver | Not planned for the MVP (uses VB-CABLE) |
 
