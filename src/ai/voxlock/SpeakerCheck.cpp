@@ -202,6 +202,8 @@ VoiceCheck::VoiceCheck() : VoiceCheck(Settings{}) {}
 VoiceCheck::VoiceCheck(const Settings& settings) : s_(settings) {
     const auto capacity = static_cast<std::size_t>(std::ceil(std::max(s_.closeSeconds, s_.openSeconds) * kSampleRate / kBlock));
     blocks_.resize(capacity);
+    minRun_ = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(s_.minSpeechSeconds * kSampleRate / kBlock - 1e-9)));
+    pending_.reserve(minRun_);
     partial_.reserve(kBlock);
     window_.reserve(capacity * kBlock);
     reset();
@@ -212,10 +214,14 @@ void VoiceCheck::reset() noexcept {
     resetPending_ = false;
     strikes_ = 0;
     reopenStreak_ = 0;
+    reopenNeed_ = s_.reopenChecks;
     longTrial_ = false;
     probation_ = false;
     asked_ = false;
     silent_ = 0;
+    quiet_ = 0;
+    inSpeech_ = false;
+    pending_.clear();
     lastScore_ = 1.0f;
     peakDb_ = -60.0f;
     time_ = 0;
@@ -241,22 +247,40 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
             e += static_cast<double>(v) * v;
         }
         const auto energyDb = static_cast<float>(10.0 * std::log10(e / kBlock + 1e-12));
-        peakDb_ = std::max(energyDb, peakDb_ - 0.01f); // the loudness reference falls by 1 dB per second
+        peakDb_ -= 0.01f; // the loudness reference falls by 1 dB per second; speech raises it (commitSpeech())
         if (energyDb > std::max(-50.0f, peakDb_ - 30.0f)) {
-            Block& b = blocks_[head_];
-            b.time = time_;
-            std::copy(partial_.begin(), partial_.end(), b.samples);
-            head_ = (head_ + 1) % blocks_.size();
-            count_ = std::min(count_ + 1, blocks_.size());
-            newSpeech_ += kBlock;
-            silent_ = 0;
-            if (state_ == State::Armed) {
-                state_ = State::Trial;
+            quiet_ = 0;
+            if (inSpeech_) {
+                // Inside a run already confirmed as speech: each further loud block counts at once.
+                commitSpeech(time_, partial_.data(), energyDb);
+            } else {
+                Pending& p = pending_.emplace_back();
+                p.time = time_;
+                p.energyDb = energyDb;
+                std::copy(partial_.begin(), partial_.end(), p.samples);
+                if (pending_.size() >= minRun_) {
+                    // Long enough to be speech, not a click: these blocks count, and so does the rest of the run.
+                    for (const Pending& q : pending_) {
+                        commitSpeech(q.time, q.samples, q.energyDb);
+                    }
+                    pending_.clear();
+                    inSpeech_ = true;
+                }
             }
         } else {
+            quiet_ += kBlock;
+            inSpeech_ = false;
+            // A loud run shorter than minSpeechSeconds (click, key, tap) is part of the silence.
+            silent_ += static_cast<long long>(pending_.size()) * kBlock;
+            pending_.clear();
             silent_ += kBlock;
             if (state_ == State::Armed && silent_ >= static_cast<long long>(s_.forgetSeconds * kSampleRate)) {
                 strikes_ = 0;
+            }
+            if (state_ == State::Armed && silent_ >= static_cast<long long>(s_.rejudgeSeconds * kSampleRate)) {
+                // A trial interrupted by a pause (below) that never resumed: the next speech is judged afresh.
+                count_ = 0;
+                longTrial_ = false;
             }
             if (state_ == State::Muted && silent_ >= static_cast<long long>(pauseNeeded() * kSampleRate)) {
                 // The other voice stopped. Whoever speaks next passes at once, judged on their own speech only,
@@ -266,6 +290,11 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
                 // The user's turn ended. Whoever speaks next passes at once but is judged quickly, on their own
                 // speech only; the model keeps following the user.
                 arm(false);
+            } else if (state_ == State::Trial && silent_ >= static_cast<long long>(s_.trialPauseSeconds * kSampleRate)) {
+                // Not enough speech to judge yet, and now a pause: mute until the next speech instead of passing
+                // whatever comes meanwhile. The speech heard so far stays, so the trial continues with the next
+                // phrase (someone talking in short phrases is still judged).
+                state_ = State::Armed;
             }
         }
         partial_.clear();
@@ -326,10 +355,25 @@ VoiceCheck::Action VoiceCheck::feed(const float* out16k, std::size_t count) {
     return action;
 }
 
-void VoiceCheck::mute() noexcept {
+void VoiceCheck::commitSpeech(long long time, const float* samples, float energyDb) noexcept {
+    Block& b = blocks_[head_];
+    b.time = time;
+    std::copy(samples, samples + kBlock, b.samples);
+    head_ = (head_ + 1) % blocks_.size();
+    count_ = std::min(count_ + 1, blocks_.size());
+    newSpeech_ += kBlock;
+    silent_ = 0;
+    peakDb_ = std::max(peakDb_, energyDb);
+    if (state_ == State::Armed) {
+        state_ = State::Trial;
+    }
+}
+
+void VoiceCheck::mute(int reopenNeed) noexcept {
     state_ = State::Muted;
     lastReset_ = time_;
     reopenStreak_ = 0;
+    reopenNeed_ = std::max(1, reopenNeed);
     longTrial_ = false;
     probation_ = false;
 }
@@ -351,7 +395,7 @@ bool VoiceCheck::decide(float score) {
         if (score < s_.closeBelow) {
             // The other voice again after its pause: it needs a longer pause next time.
             strikes_ = std::min(strikes_ + 1, s_.maxStrikes);
-            mute();
+            mute(s_.reopenChecks);
             return true;
         }
         if (score > s_.openAbove) {
@@ -365,12 +409,12 @@ bool VoiceCheck::decide(float score) {
             return false;
         }
         // Still not clearly the user on 0.8 s: fail closed (no strike, it may be the user on a bad moment;
-        // the muted state reopens for them on two clear checks).
-        mute();
+        // the muted state reopens for them on one clear check, so their words are not held back for long).
+        mute(s_.reopenChecksUnclear);
         return true;
     case State::Open:
         if (score < s_.closeBelow) {
-            mute();
+            mute(s_.reopenChecks);
             return true;
         }
         if (score > s_.openAbove) {
@@ -380,7 +424,7 @@ bool VoiceCheck::decide(float score) {
     case State::Muted:
         if (score <= s_.openAbove) {
             reopenStreak_ = 0;
-        } else if (++reopenStreak_ >= s_.reopenChecks) {
+        } else if (++reopenStreak_ >= reopenNeed_) {
             state_ = State::Open;
             strikes_ = 0;
             reopenStreak_ = 0;

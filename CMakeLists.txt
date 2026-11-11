@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(VoiceStudio
-    VERSION 1.1.0
+    VERSION 1.1.1
     DESCRIPTION "Ultra-low-latency local noise suppression and voice processing for Windows"
     LANGUAGES C CXX)
 

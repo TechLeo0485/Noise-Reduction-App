@@ -397,6 +397,136 @@ TEST(SpeakerCheck, OldSpeechIsNotUsed) {
     EXPECT_EQ(checks, 1);
 }
 
+namespace {
+
+// 0.1 s of output with a 20 ms "click" (loud noise burst) at the start and silence after it.
+std::vector<float> clickBlock() {
+    std::vector<float> x(1600, 0.0f);
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<float> u(-0.5f, 0.5f);
+    for (std::size_t i = 0; i < 320; ++i) {
+        x[i] = u(rng);
+    }
+    return x;
+}
+
+std::vector<float> speechBlock() {
+    std::vector<float> x(1600);
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        x[i] = 0.1f * static_cast<float>(std::sin(test::kTwoPi * 300.0 * static_cast<double>(i) / 16000.0));
+    }
+    return x;
+}
+
+} // namespace
+
+TEST(SpeakerCheck, ClicksAreNotSpeech) {
+    VoiceCheck check;
+    const std::vector<float> speech = speechBlock();
+    const std::vector<float> silence(speech.size(), 0.0f);
+    const std::vector<float> click = clickBlock();
+    // The user talks, then stops: after 1 s the gate waits for the next speech.
+    for (int i = 0; i < 5; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            check.decide(0.6f);
+        }
+    }
+    for (int i = 0; i < 10; ++i) {
+        check.feed(silence.data(), silence.size());
+    }
+    ASSERT_EQ(check.gate(), VoiceCheck::Gate::OpenOnSpeech);
+    // Clicking for 5 s neither opens the gate nor starts a trial, and a gate the worker opened on a click is
+    // closed again by the next quiet moment.
+    for (int i = 0; i < 50; ++i) {
+        EXPECT_EQ(check.feed(click.data(), click.size()), VoiceCheck::Action::None);
+        EXPECT_EQ(check.gate(), VoiceCheck::Gate::OpenOnSpeech);
+        EXPECT_TRUE(check.closeOnsetGate());
+    }
+    // Real speech still opens it at once.
+    check.feed(speech.data(), speech.size());
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
+    EXPECT_FALSE(check.closeOnsetGate());
+}
+
+TEST(SpeakerCheck, ClicksDoNotKeepTheGateMuted) {
+    VoiceCheck check;
+    const std::vector<float> speech = speechBlock();
+    const std::vector<float> click = clickBlock();
+    // Someone else: muted.
+    bool muted = false;
+    for (int i = 0; i < 10 && !muted; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            muted = check.decide(0.05f);
+        }
+    }
+    ASSERT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    // They stop, but the user keeps clicking: the pause still ends their turn after 0.3 s, so the user's next
+    // words pass. (Before, every click restarted the pause and the gate stayed muted.)
+    const std::vector<float> silence(click.size(), 0.0f);
+    check.feed(silence.data(), silence.size());
+    check.feed(click.data(), click.size());
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    check.feed(click.data(), click.size());
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::OpenOnSpeech);
+    EXPECT_TRUE(check.resetDue());
+}
+
+TEST(SpeakerCheck, PauseDuringTrialMutesUntilNextSpeech) {
+    VoiceCheck check;
+    const std::vector<float> speech = speechBlock();
+    const std::vector<float> silence(speech.size(), 0.0f);
+    for (int i = 0; i < 11; ++i) {
+        check.feed(silence.data(), silence.size());
+    }
+    ASSERT_EQ(check.gate(), VoiceCheck::Gate::OpenOnSpeech);
+    // 0.2 s of speech passes at once, but cannot be judged yet ...
+    for (int i = 0; i < 2; ++i) {
+        EXPECT_EQ(check.feed(speech.data(), speech.size()), VoiceCheck::Action::None);
+    }
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
+    // ... a 0.3 s pause mutes until the next speech (no more passing whatever comes meanwhile) ...
+    for (int i = 0; i < 3; ++i) {
+        check.feed(silence.data(), silence.size());
+    }
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::OpenOnSpeech);
+    EXPECT_FALSE(check.resetDue());
+    // ... and the trial goes on with the next phrase: 0.2 + 0.2 s of speech is judged.
+    EXPECT_EQ(check.feed(speech.data(), speech.size()), VoiceCheck::Action::None);
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
+    ASSERT_EQ(check.feed(speech.data(), speech.size()), VoiceCheck::Action::Check);
+    EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
+    EXPECT_TRUE(check.decide(0.05f));
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+}
+
+TEST(SpeakerCheck, UnclearTrialReopensOnOneClearCheck) {
+    VoiceCheck check;
+    const std::vector<float> speech = speechBlock();
+    const std::vector<float> silence(speech.size(), 0.0f);
+    for (int i = 0; i < 11; ++i) {
+        check.feed(silence.data(), silence.size());
+    }
+    // Unclear on 0.4 s and on 0.8 s: muted (fail closed) ...
+    bool muted = false;
+    for (int i = 0; i < 10 && !muted; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            muted = check.decide(0.18f);
+        }
+    }
+    ASSERT_TRUE(muted);
+    ASSERT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    // ... but it was the user: the next clear check reopens at once.
+    bool checked = false;
+    for (int i = 0; i < 10 && !checked; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            EXPECT_FALSE(check.decide(0.3f));
+            checked = true;
+        }
+    }
+    ASSERT_TRUE(checked);
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
+}
+
 TEST(SpeakerCheck, StateResetKeepsTheAudioFlowing) {
     IdentityModel model(2);
     Stream stream(2, 160);

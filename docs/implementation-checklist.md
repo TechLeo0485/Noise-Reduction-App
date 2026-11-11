@@ -7,6 +7,11 @@ Legend: **[x]** implemented in code · **[v]** verified by building and running 
 > pass on an i7-12700KF; processing benchmarks are recorded in latency-benchmarks.md.
 > **Not yet verified:** the GUI interactively, audio output to VB-CABLE, end-to-end
 > loopback latency, device unplug recovery, and an 8-hour soak.
+>
+> **2026-11-10 (v1.1.1):** 154 unit tests pass (MSVC 14.44, Qt 6.8.3). Voice isolation now runs on
+> ONNX Runtime 1.24.4 (DirectML build) on the CPU or a GPU, with the CAM++ voice check. The voice check no longer
+> counts clicks and key presses as speech; that fixes the user's first words being muted and other voices
+> passing after the user stopped talking.
 
 ## Phase 1: native audio pipeline
 
@@ -42,7 +47,8 @@ Legend: **[x]** implemented in code · **[v]** verified by building and running 
 - [x] CPU detection (CPUID vendor/brand, cores, SIMD with OS support check, memory)
 - [x] GPU enumeration (DXGI: name, vendor, LUID, dedicated memory)
 - [x] Backend list that shows unavailable devices as disabled with reasons
-- [ ] ONNX Runtime integration (CPU / DirectML / QNN / OpenVINO providers)
+- [x] ONNX Runtime integration: CPU and DirectML (used by voice isolation; processor calibration and Auto choice)
+- [ ] QNN / OpenVINO providers
 - [ ] Model selection: evaluate licensing, size, latency (candidates: DTLN, DeepFilterNet,
       FRCRN, GTCRN); reject models that cannot meet a 10 ms hop on mid-range CPUs
 - [ ] Off-thread model loading + validation + atomic swap into the chain
@@ -63,6 +69,10 @@ Legend: **[x]** implemented in code · **[v]** verified by building and running 
 - [x] Soak-test tool (`vs_soak`) and procedure
 - [x] Installer script (Inno Setup) and deploy step (windeployqt via CMake install)
 - [x] Target-speaker isolation: strict voice isolation with VoxLock INT8 Full (enrollment stored locally, deletable, fail-closed)
+- [x] Voice check (CAM++) on the isolated output: mutes other voices; clicks and key presses are not speech
+- [x] Isolation model choice (Full isolation, Lightweight filter, Voice check only)
+- [x] In-app updates from GitHub releases (SHA-256 checked) and the tag-driven release workflow
+- [x] VoiceStudio Virtual Microphone driver (SysVAD-based); shipped only when a signed package is committed
 - [ ] Suspend/resume verified on real hardware
 - [ ] Code signing
 - [ ] Optional per-packet DSP-only path to remove 10 ms framing in DSP mode

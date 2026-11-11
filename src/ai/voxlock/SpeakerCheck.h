@@ -79,6 +79,16 @@ public:
         double maxAge = 4.0;         // speech older than this is not used
         double resetEvery = 0.5;     // while muted, the model state is reset again this often (it locks onto
                                      // the voice it hears first, so the user must be heard after a reset)
+        double minSpeechSeconds = 0.04; // loud output shorter than this (a mouse click, a key, a tap) is not
+                                     // speech: it neither starts a trial nor interrupts a pause. Without it,
+                                     // clicks kept a muted gate from re-arming (the user's first words were
+                                     // muted) and kept an undecided trial open (other voices passed)
+        double trialPauseSeconds = 0.3; // a pause this long before a trial could be decided closes the gate
+                                     // until the next speech; the trial goes on with that speech
+        double onsetQuietSeconds = 0.05; // while armed, output this quiet for this long means a gate the worker
+                                     // opened on a loud chunk was not speech (closeOnsetGate())
+        int reopenChecksUnclear = 1; // like reopenChecks, after a trial that was only unclear (likely the user
+                                     // on a bad moment): one clear check is enough to reopen
     };
 
     enum class Action { None, Check };
@@ -104,13 +114,22 @@ public:
     // Mean square above which output counts as speech (for the gate's own onset detection).
     [[nodiscard]] float speechLevel() const noexcept;
     [[nodiscard]] float lastScore() const noexcept { return lastScore_; }
+    // Armed (gate OpenOnSpeech) and quiet for onsetQuietSeconds: whatever made the worker open the gate was not
+    // speech (a click), so the gate should go back to OpenOnSpeech.
+    [[nodiscard]] bool closeOnsetGate() const noexcept {
+        return state_ == State::Armed && quiet_ >= static_cast<long long>(s_.onsetQuietSeconds * kRate);
+    }
 
     // Seconds of pause that currently end the other voice's turn (grows with strikes).
     [[nodiscard]] double pauseNeeded() const noexcept { return s_.pauseSeconds + strikes_ * s_.pauseStep; }
 
 private:
     static constexpr int kBlock = 160; // 10 ms
-    void mute() noexcept;
+    static constexpr int kRate = 16000;
+    // `reopenNeed`: clear checks in a row that reopen the gate.
+    void mute(int reopenNeed) noexcept;
+    // A loud block that belongs to a run of at least minSpeechSeconds: speech.
+    void commitSpeech(long long time, const float* samples, float energyDb) noexcept;
     // Whoever speaks next is judged on their own speech; `resetModel` also restarts the model state.
     void arm(bool resetModel) noexcept;
     // Muted -> (pause) -> Armed -> (speech) -> Trial -> Open or Muted; Open -> (long silence) -> Armed.
@@ -120,6 +139,8 @@ private:
     bool resetPending_ = false;
     int strikes_ = 0;                   // trials in a row that were the other voice (longer pause needed)
     int reopenStreak_ = 0;              // checks in a row above openAbove while muted
+    int reopenNeed_ = 2;                // checks in a row needed to reopen (see mute())
+    long long quiet_ = 0;               // samples since the last loud block (speech or not)
     bool longTrial_ = false;            // the quick trial was ambiguous: judged again on openSeconds
     bool probation_ = false;            // open after a trial: checked on shorter windows until closeSeconds
     bool asked_ = false;                // a trial check was handed out in this feed() call
@@ -135,6 +156,14 @@ private:
         long long time;
         float samples[kBlock];
     };
+    struct Pending {
+        long long time;
+        float energyDb;
+        float samples[kBlock];
+    };
+    std::vector<Pending> pending_;      // loud blocks not yet long enough to count as speech
+    std::size_t minRun_ = 4;            // blocks in minSpeechSeconds
+    bool inSpeech_ = false;             // the current loud run has reached minRun_
     std::vector<Block> blocks_;         // ring of the newest speech blocks
     std::size_t head_ = 0;              // next write position
     std::size_t count_ = 0;

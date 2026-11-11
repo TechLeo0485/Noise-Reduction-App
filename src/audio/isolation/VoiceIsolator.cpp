@@ -77,6 +77,7 @@ constexpr std::size_t kCheckRingCapacity = voxlock::kSampleRate * 2;       // 2 
 constexpr std::size_t kCheckBlock = 1600;      // 16 kHz samples the checker takes at a time
 constexpr float kGateStep = 1.0f / 320.0f;     // the voice check mutes over 20 ms ...
 constexpr float kGateOpenStep = 1.0f / 80.0f;  // ... and unmutes over 5 ms (keeps the start of a word)
+constexpr double kOnsetMaxCrest2 = 100.0;      // peak / RMS above 20 dB: a click, not the start of speech
 constexpr int kGateOpen = static_cast<int>(voxlock::VoiceCheck::Gate::Open);
 constexpr int kGateOnSpeech = static_cast<int>(voxlock::VoiceCheck::Gate::OpenOnSpeech);
 
@@ -1406,20 +1407,31 @@ void VoiceIsolator::workerProcess() {
                 }
                 if (isolated > 0 && checkActive_.load(std::memory_order_relaxed)) {
                     // The checker hears the output before the gate, so it notices when the user is back.
-                    checkRing_.tryPush(out16_.data(), static_cast<std::size_t>(isolated));
+                    if (checkRing_.tryPush(out16_.data(), static_cast<std::size_t>(isolated))) {
+                        checkPushed_ += static_cast<std::uint64_t>(isolated);
+                    }
                     SetEvent(checkEvent_);
                 }
                 int gate = gate_.load(std::memory_order_acquire);
                 if (gate == kGateOnSpeech && isolated > 0) {
                     // Muted until someone speaks after a pause: open on this chunk, not after the checker has
                     // seen it, so the first syllable passes. The checker then judges the new speech.
+                    // A click is loud but brief: its peak towers over the chunk's mean level, while speech is
+                    // spread out. Such a chunk does not open the gate (a word starting with one opens on the
+                    // next chunk).
                     double energy = 0.0;
+                    float peak = 0.0f;
                     for (int i = 0; i < isolated; ++i) {
-                        energy += static_cast<double>(out16_[static_cast<std::size_t>(i)]) * out16_[static_cast<std::size_t>(i)];
+                        const float v = out16_[static_cast<std::size_t>(i)];
+                        energy += static_cast<double>(v) * v;
+                        peak = std::max(peak, std::fabs(v));
                     }
-                    if (energy / isolated > speechLevel_.load(std::memory_order_relaxed) &&
+                    const double meanSquare = energy / isolated;
+                    const bool impulsive = static_cast<double>(peak) * peak > kOnsetMaxCrest2 * meanSquare;
+                    if (meanSquare > speechLevel_.load(std::memory_order_relaxed) && !impulsive &&
                         gate_.compare_exchange_strong(gate, kGateOpen, std::memory_order_acq_rel)) {
                         gate = kGateOpen;
+                        onsetOpenedAt_.store(checkPushed_, std::memory_order_release); // this chunk is in checkRing_
                     }
                 }
                 const float target = gate == kGateOpen ? 1.0f : 0.0f;
@@ -1484,11 +1496,11 @@ void VoiceIsolator::checkerMain() {
             seenCheckRestarts_ = restarts;
             voiceCheck_.reset();
             publishedGate_ = voxlock::VoiceCheck::Gate::Open; // the worker opened the gate
-            checkRing_.skip(checkRing_.available());
+            checkConsumed_ += checkRing_.skip(checkRing_.available());
             metrics_.voiceGateOpen.store(true, std::memory_order_relaxed);
         }
         if (!checkActive_.load(std::memory_order_acquire)) {
-            checkRing_.skip(checkRing_.available());
+            checkConsumed_ += checkRing_.skip(checkRing_.available());
             if (!voiceCheck_.open()) {
                 voiceCheck_.reset();
             }
@@ -1502,6 +1514,7 @@ void VoiceIsolator::checkerMain() {
             if (n == 0) {
                 break;
             }
+            checkConsumed_ += n;
             bool reset = false;
             if (voiceCheck_.feed(block.data(), n) == voxlock::VoiceCheck::Action::Check) {
                 bool ok = false;
@@ -1540,6 +1553,12 @@ void VoiceIsolator::checkerMain() {
             if (reset) {
                 stateResets_.fetch_add(1, std::memory_order_acq_rel);
             }
+        }
+        // Caught up with the worker's output: if it opened an OpenOnSpeech gate on something that was not speech
+        // (a click), close it again. Speech would have moved the check on to a trial by now.
+        if (voiceCheck_.closeOnsetGate() && checkConsumed_ >= onsetOpenedAt_.load(std::memory_order_acquire)) {
+            int open = kGateOpen;
+            gate_.compare_exchange_strong(open, kGateOnSpeech, std::memory_order_acq_rel);
         }
     }
 }

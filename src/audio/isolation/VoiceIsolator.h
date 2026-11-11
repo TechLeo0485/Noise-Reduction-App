@@ -313,6 +313,12 @@ private:
     std::atomic<float> speechLevel_{1e-5f};           // checker: mean square that counts as speech
     std::atomic<std::uint32_t> stateResets_{0};       // checker: requests; the worker resets the LSTM state
     std::atomic<std::uint32_t> checkRestarts_{0};     // worker: the stream restarted, start judging afresh
+    // Positions in the checkRing_ stream (16 kHz samples since start): the worker's pushes, the checker's reads, and
+    // where the worker last opened an OpenOnSpeech gate by itself. The checker closes such a gate again only once it
+    // has read past that point, so it never closes a gate for speech it has not heard yet.
+    std::uint64_t checkPushed_ = 0;                   // worker
+    std::uint64_t checkConsumed_ = 0;                 // checker
+    std::atomic<std::uint64_t> onsetOpenedAt_{0};     // worker -> checker
     std::uint32_t seenStateResets_ = 0;               // worker
     float gateGain_ = 1.0f;                           // worker
     voxlock::VoiceCheck voiceCheck_;                  // checker

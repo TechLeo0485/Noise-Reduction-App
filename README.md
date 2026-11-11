@@ -27,13 +27,13 @@ cable as their microphone. Everything runs on your machine: no cloud, no account
 | CPU / GPU detection (CPUID, DXGI) | Implemented |
 | Live metrics: P50/P95/P99 timings, dropouts, drift, latency breakdown, CPU, memory | Implemented |
 | Virtual cable test and loopback latency measurement | Implemented |
-| Advanced AI (ONNX Runtime, GPU/NPU) | **Not in this build**: UI shows it as unavailable |
+| ONNX Runtime 1.24.4 with DirectML (CPU, or a GPU from NVIDIA, AMD or Intel) | Implemented for voice isolation; NPUs and an AI noise-suppression model are not in this build |
 | Runs in the notification area: closing the window keeps processing; optional start with Windows (`--minimized`) | Implemented |
-| Strict voice isolation (removes other people's voices, VoxLock INT8 Full, CPU) | Implemented: record your voice once; fail-closed (silence, never the raw microphone) |
+| Strict voice isolation (removes other people's voices, VoxLock INT8 Full on CPU or GPU, CAM++ voice check) | Implemented: record your voice once; fail-closed (silence, never the raw microphone); clicks and key presses are not treated as speech by the voice check |
 | Isolation model choice: Full isolation (VoxLock), Lightweight filter (VoiceFilter-Lite design), Voice check only; one recording for all models | Implemented; the Lightweight filter needs a model trained with `tools/voicefilter` (none published) |
 | Click remover for mouse clicks and keys between words | Experimental, off by default |
 | Voice changer: 8 voices, Pitch / Thickness / Presence, saved custom voices, next-voice and effects on/off shortcuts | Implemented |
-| Custom virtual audio driver | Not planned for the MVP (uses VB-CABLE) |
+| VoiceStudio Virtual Microphone (own kernel driver, based on SysVAD; see [driver/README.md](driver/README.md)) | Implemented; needs the WDK and a signed package to ship, otherwise setup offers VB-CABLE |
 
 ## Requirements
 
@@ -82,8 +82,8 @@ Useful options:
 | `RNNOISE_SOURCE_DIR` | (empty) | Use a local RNNoise tree (offline builds) |
 | `VOICESTUDIO_BUILD_TESTS` | ON | GoogleTest suites |
 | `VOICESTUDIO_BUILD_TOOLS` | ON | `vs_bench`, `vs_latency`, `vs_soak` (+ `vs_isolation` with VoxLock) |
-| `VOICESTUDIO_WITH_VOXLOCK` | ON | Strict voice isolation. Configure downloads ONNX Runtime 1.31 (CPU) and the VoxLock INT8 Full models (~85 MB, SHA-256 pinned) once |
-| `ONNXRUNTIME_ROOT` / `VOXLOCK_MODEL_DIR` | (empty) | Offline builds: an extracted `onnxruntime-win-x64-1.31.0` package / a folder with `enroll.onnx` and `chunk_int8_full.onnx` |
+| `VOICESTUDIO_WITH_VOXLOCK` | ON | Strict voice isolation. Configure downloads ONNX Runtime 1.24.4 (DirectML build), DirectML 1.15.4, the VoxLock INT8 Full models and the CAM++ voice-check model (all SHA-256 pinned) once |
+| `ONNXRUNTIME_ROOT` / `DIRECTML_ROOT` / `VOXLOCK_MODEL_DIR` | (empty) | Offline builds: extracted ONNX Runtime / DirectML packages, and a folder with the three `.onnx` model files (see `cmake/Dependencies.cmake`) |
 
 Outputs land in `build/<preset>/bin/`.
 
