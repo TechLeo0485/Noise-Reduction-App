@@ -51,6 +51,19 @@ void setCurrentThreadName(const wchar_t* name) noexcept;
 // logical processors selected (0 if the CPU has a single core class and nothing was restricted).
 int preferPerformanceCores() noexcept;
 
+// Gives the whole application priority over ordinary programs, so a busy computer (a game, a browser, a compile)
+// does not starve the audio and the isolation model:
+//   - CPU: HIGH_PRIORITY_CLASS. Not REALTIME_PRIORITY_CLASS: that would also outrank the mouse, keyboard and the
+//     Windows audio service itself (audio would then break, not improve), and Windows only grants it to admins.
+//   - power throttling (EcoQoS) off for the process, also while the window is hidden in the tray;
+//   - GPU: the high scheduling priority class for this process's GPU work (DirectML inference), ahead of games.
+struct ProcessPriorityResult {
+    bool cpu = false;
+    bool powerThrottlingOff = false;
+    bool gpu = false;
+};
+ProcessPriorityResult raiseProcessPriority() noexcept;
+
 // For helper threads that must not slow the real-time ones down (e.g. the voice check): below-normal
 // priority and, on hybrid CPUs, the slowest core class (the E-cores), away from the inference threads.
 // Returns the number of logical processors selected (0 if nothing was restricted).

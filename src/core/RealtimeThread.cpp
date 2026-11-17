@@ -34,7 +34,9 @@ ScopedMmcss::ScopedMmcss(const wchar_t* taskName) noexcept {
     DWORD taskIndex = 0;
     handle_ = AvSetMmThreadCharacteristicsW(taskName, &taskIndex);
     if (handle_ != nullptr) {
-        AvSetMmThreadPriority(handle_, AVRT_PRIORITY_HIGH);
+        // The top MMCSS level (what professional audio drivers use): audio and isolation threads keep their timing
+        // even when the computer is fully busy.
+        AvSetMmThreadPriority(handle_, AVRT_PRIORITY_CRITICAL);
     }
 }
 
@@ -108,6 +110,31 @@ int preferPerformanceCores() noexcept {
     throttling.StateMask = 0; // never EcoQoS
     SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &throttling, sizeof(throttling));
     return selectCoreClass(true);
+}
+
+ProcessPriorityResult raiseProcessPriority() noexcept {
+    ProcessPriorityResult result;
+    HANDLE process = GetCurrentProcess();
+    result.cpu = SetPriorityClass(process, HIGH_PRIORITY_CLASS) != FALSE;
+
+    PROCESS_POWER_THROTTLING_STATE throttling{};
+    throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+    throttling.StateMask = 0; // never throttled
+    result.powerThrottlingOff =
+        SetProcessInformation(process, ProcessPowerThrottling, &throttling, sizeof(throttling)) != FALSE;
+
+    // D3DKMTSetProcessSchedulingPriorityClass (gdi32, Windows 7+): the GPU scheduler's priority for this process.
+    // Looked up at run time; D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH = 4 (REALTIME = 5 needs admin rights and can
+    // starve the desktop compositor).
+    using SetGpuPriority = LONG(WINAPI*)(HANDLE, int);
+    if (HMODULE gdi = GetModuleHandleW(L"gdi32.dll"); gdi != nullptr) {
+        const auto set = reinterpret_cast<SetGpuPriority>(
+            reinterpret_cast<void*>(GetProcAddress(gdi, "D3DKMTSetProcessSchedulingPriorityClass")));
+        constexpr int kGpuPriorityHigh = 4;
+        result.gpu = set != nullptr && set(process, kGpuPriorityHigh) >= 0;
+    }
+    return result;
 }
 
 int preferEfficiencyCores() noexcept {

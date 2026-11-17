@@ -89,6 +89,11 @@ public:
                                      // opened on a loud chunk was not speech (closeOnsetGate())
         int reopenChecksUnclear = 1; // like reopenChecks, after a trial that was only unclear (likely the user
                                      // on a bad moment): one clear check is enough to reopen
+        float closeHardBelow = 0.08f; // a score this low is certainly someone else (another voice scores ~0.0):
+                                     // muted on one check. Between this and closeBelow it may be the user on a bad
+                                     // moment (a cough, a laugh, a whisper) ...
+        int closeChecks = 2;         // ... so that takes this many low checks in a row (0.3 s apart) while open,
+                                     // and a quick trial is judged again on more speech instead of being muted
     };
 
     enum class Action { None, Check };
@@ -140,6 +145,7 @@ private:
     int strikes_ = 0;                   // trials in a row that were the other voice (longer pause needed)
     int reopenStreak_ = 0;              // checks in a row above openAbove while muted
     int reopenNeed_ = 2;                // checks in a row needed to reopen (see mute())
+    int closeStreak_ = 0;               // low (not certain) checks in a row while open
     long long quiet_ = 0;               // samples since the last loud block (speech or not)
     bool longTrial_ = false;            // the quick trial was ambiguous: judged again on openSeconds
     bool probation_ = false;            // open after a trial: checked on shorter windows until closeSeconds

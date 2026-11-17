@@ -215,6 +215,7 @@ void VoiceCheck::reset() noexcept {
     strikes_ = 0;
     reopenStreak_ = 0;
     reopenNeed_ = s_.reopenChecks;
+    closeStreak_ = 0;
     longTrial_ = false;
     probation_ = false;
     asked_ = false;
@@ -373,6 +374,7 @@ void VoiceCheck::mute(int reopenNeed) noexcept {
     state_ = State::Muted;
     lastReset_ = time_;
     reopenStreak_ = 0;
+    closeStreak_ = 0;
     reopenNeed_ = std::max(1, reopenNeed);
     longTrial_ = false;
     probation_ = false;
@@ -392,8 +394,9 @@ bool VoiceCheck::decide(float score) {
     asked_ = false;
     switch (state_) {
     case State::Trial:
-        if (score < s_.closeBelow) {
-            // The other voice again after its pause: it needs a longer pause next time.
+        // Certainly someone else, or low on the full 0.8 s: the other voice again after its pause, which needs a
+        // longer pause next time. Low on the quick 0.4 s only: judged again on more speech (it may be the user).
+        if (score < s_.closeHardBelow || (longTrial_ && score < s_.closeBelow)) {
             strikes_ = std::min(strikes_ + 1, s_.maxStrikes);
             mute(s_.reopenChecks);
             return true;
@@ -402,6 +405,7 @@ bool VoiceCheck::decide(float score) {
             state_ = State::Open;
             longTrial_ = false;
             probation_ = true;
+            closeStreak_ = 0;
             return false;
         }
         if (!longTrial_) {
@@ -413,9 +417,13 @@ bool VoiceCheck::decide(float score) {
         mute(s_.reopenChecksUnclear);
         return true;
     case State::Open:
-        if (score < s_.closeBelow) {
+        if (score < s_.closeHardBelow || (score < s_.closeBelow && ++closeStreak_ >= s_.closeChecks)) {
+            closeStreak_ = 0;
             mute(s_.reopenChecks);
             return true;
+        }
+        if (score >= s_.closeBelow) {
+            closeStreak_ = 0;
         }
         if (score > s_.openAbove) {
             strikes_ = 0; // clearly the user
@@ -428,6 +436,7 @@ bool VoiceCheck::decide(float score) {
             state_ = State::Open;
             strikes_ = 0;
             reopenStreak_ = 0;
+            closeStreak_ = 0;
         }
         return false;
     case State::Armed:

@@ -711,6 +711,11 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
         if (processor.dmlDevice < 0 && logicalCores >= 6) {
             threadCounts.push_back(kMoreThreads);
         }
+        // Big CPUs: also try half the logical cores (up to 8), so a busy or slower-per-core CPU can still keep up by
+        // using more of its cores. Measured like the others; only used when fewer threads do not keep up.
+        if (const int many = static_cast<int>(std::min(8u, logicalCores / 2)); processor.dmlDevice < 0 && many > kMoreThreads) {
+            threadCounts.push_back(many);
+        }
         for (int k : sizes) {
             for (int threads : threadCounts) {
                 voxlock::ChunkModelOptions options;
@@ -821,14 +826,11 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
     const ProcessorTrial& t = trials[static_cast<std::size_t>(chosen)];
     const IsolationProcessor& processor = candidates[static_cast<std::size_t>(chosen)];
     if (!t.realTime) {
-        // Running the model anyway would mean constant gaps; light isolation keeps the voice flowing.
-        {
-            std::lock_guard lock(statusMutex_);
-            status_.trials = trials;
-        }
-        useLightIsolation("measured " + processor.name + ": " + std::to_string(t.p50Ms) + " ms per " +
-                          std::to_string(t.framesPerRun * kHopMs) + " ms of audio");
-        return true;
+        // The selected model always runs; VoiceStudio never swaps it for a weaker one by itself. Calibration runs at
+        // a moment the computer may be busy (start-up), and with the raised process priority the model usually keeps
+        // up once running; the health monitor raises the chunk size if it does not.
+        logWarning("Voice isolation: " + processor.name + " measured slower than real time (" + std::to_string(t.p50Ms) +
+                   " ms per " + std::to_string(t.framesPerRun * kHopMs) + " ms of audio); running the selected model anyway");
     }
     publish(std::move(models[static_cast<std::size_t>(chosen)]), t.framesPerRun);
     currentDmlDevice_ = processor.dmlDevice;
@@ -853,7 +855,8 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
     } else if (preferred != "auto" && preferred != processor.id) {
         where += " (the chosen processor could not run it)";
     }
-    const std::string steps = t.framesPerRun > kChunkSizes[0]
+    const std::string steps = !t.realTime ? " (this computer is very busy: close other heavy programs if you hear gaps)"
+                              : t.framesPerRun > kChunkSizes[0]
                                   ? " (" + std::to_string(t.framesPerRun * 8) + " ms steps, so this computer keeps up)"
                                   : std::string();
     setStatus(IsolationState::Ready, "Isolating your voice" + where + steps + ".", false);
@@ -982,11 +985,14 @@ void VoiceIsolator::monitor() {
     const std::vector<int> sizes = chunkSizesWithin(maxLatencyMs());
     const auto larger = std::upper_bound(sizes.begin(), sizes.end(), k);
     if (larger == sizes.end()) {
-        // Even the largest chunk that fits the delay budget keeps falling behind (a slow or very busy computer).
-        if (!testFactory_) {
-            useLightIsolation(std::to_string(sample.underruns - underrunsBefore) + " late chunks in 10 s with " +
-                              std::to_string(k * 8) + " ms chunks");
-        }
+        // Even the largest chunk that fits the delay budget falls behind (a very busy computer). The selected model
+        // keeps running - it is never swapped for a weaker one automatically; the user is told why there are gaps.
+        logWarning("Voice isolation: " + std::to_string(sample.underruns - underrunsBefore) + " late chunks in 10 s with " +
+                   std::to_string(k * 8) + " ms chunks; keeping the selected model");
+        setStatus(IsolationState::Ready,
+                  "This computer is very busy, so there may be short gaps in your voice. Close other heavy programs, or "
+                  "choose a GPU in Setup.",
+                  false);
         health_.clear();
         return;
     }
@@ -1238,14 +1244,23 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
                     metrics_.latencyCaps.fetch_add(1, std::memory_order_relaxed);
                 } else if (available >= n) {
                     if (pendingTrim_ > 0 && quietFrames_ >= 2 && fill >= n + pendingTrim_) {
-                        // Drop surplus delay while the voice is silent; the next frame fades in.
-                        outRing_.pop(trimScratch_.data(), pendingTrim_);
-                        popped_ += static_cast<long long>(pendingTrim_);
-                        fill -= pendingTrim_;
-                        pendingTrim_ = 0;
-                        fadeIn_ = 0;
-                        minFill_ = SIZE_MAX;
-                        fillWindowFrames_ = 0;
+                        // Drop surplus delay while the voice is silent - but only if the audio to be dropped and the
+                        // frame after it are silent too, so the start of a word is never what gets cut. Silence on
+                        // both sides of the cut: no fade needed.
+                        const std::size_t look = std::min(pendingTrim_ + n, trimScratch_.size());
+                        const std::size_t seen = outRing_.peek(trimScratch_.data(), look);
+                        float ahead = 0.0f;
+                        for (std::size_t i = 0; i < seen; ++i) {
+                            ahead = std::max(ahead, std::fabs(trimScratch_[i]));
+                        }
+                        if (seen == look && ahead < kQuietPeak) {
+                            outRing_.skip(pendingTrim_);
+                            popped_ += static_cast<long long>(pendingTrim_);
+                            fill -= pendingTrim_;
+                            pendingTrim_ = 0;
+                            minFill_ = SIZE_MAX;
+                            fillWindowFrames_ = 0;
+                        }
                     }
                     minFill_ = std::min(minFill_, fill);
                     if (++fillWindowFrames_ >= kTrimWindowFrames) {
@@ -1486,7 +1501,10 @@ void VoiceIsolator::updateSpeakerReference(const std::vector<float>& recording16
 
 void VoiceIsolator::checkerMain() {
     setCurrentThreadName(L"VoiceIsolator voice check");
-    preferEfficiencyCores(); // not real-time: keep it off the cores the isolation runs on
+    // Not real-time, but its decisions (mute / unmute) must not lag behind the voice: a late decision cuts the user's
+    // words or lets another voice through. Above normal (inside the high process class) and free to use any core;
+    // it needs little CPU (one short embedding every 0.3 s at most).
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     std::vector<float> block(kCheckBlock);
     std::vector<float> embedding;
     while (!workerQuit_.load(std::memory_order_acquire)) {

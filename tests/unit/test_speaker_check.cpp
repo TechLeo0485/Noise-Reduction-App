@@ -210,7 +210,7 @@ TEST(SpeakerCheck, MutesAnotherVoiceAndReopensForTheUser) {
     // After 0.4 s of it (and only it) a check: someone else again, so muted again.
     ASSERT_EQ(check.feed(speech.data(), speech.size()), VoiceCheck::Action::Check);
     EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
-    EXPECT_TRUE(check.decide(0.1f));
+    EXPECT_TRUE(check.decide(0.05f));
     EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
 
     // That pause was the other voice's: the next turn needs a longer pause (0.6 s).
@@ -497,6 +497,69 @@ TEST(SpeakerCheck, PauseDuringTrialMutesUntilNextSpeech) {
     EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
     EXPECT_TRUE(check.decide(0.05f));
     EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+}
+
+TEST(SpeakerCheck, OneBorderlineScoreDoesNotCutTheUser) {
+    VoiceCheck check;
+    const std::vector<float> speech = speechBlock();
+    const auto nextCheck = [&]() {
+        for (int i = 0; i < 20; ++i) {
+            if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // While open (the user talking): one low-but-not-certain window (a cough, a laugh) does not mute ...
+    ASSERT_TRUE(nextCheck());
+    EXPECT_FALSE(check.decide(0.1f));
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
+    // ... a normal one in between starts the count again ...
+    ASSERT_TRUE(nextCheck());
+    EXPECT_FALSE(check.decide(0.4f));
+    ASSERT_TRUE(nextCheck());
+    EXPECT_FALSE(check.decide(0.1f));
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
+    // ... two in a row mute,
+    ASSERT_TRUE(nextCheck());
+    EXPECT_TRUE(check.decide(0.1f));
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Muted);
+    // and a certain other voice mutes at once.
+    VoiceCheck other;
+    for (int i = 0; i < 20; ++i) {
+        if (other.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            EXPECT_TRUE(other.decide(0.02f));
+            break;
+        }
+    }
+    EXPECT_EQ(other.gate(), VoiceCheck::Gate::Muted);
+}
+
+TEST(SpeakerCheck, BorderlineQuickTrialIsJudgedOnMoreSpeech) {
+    VoiceCheck check;
+    const std::vector<float> speech = speechBlock();
+    const std::vector<float> silence(speech.size(), 0.0f);
+    for (int i = 0; i < 11; ++i) {
+        check.feed(silence.data(), silence.size());
+    }
+    // Low on 0.4 s, but not certain: keeps passing, judged again on 0.8 s ...
+    int checks = 0;
+    for (int i = 0; i < 10 && checks < 2; ++i) {
+        if (check.feed(speech.data(), speech.size()) == VoiceCheck::Action::Check) {
+            ++checks;
+            if (checks == 1) {
+                EXPECT_EQ(check.speech().size(), 16000u * 2 / 5);
+                EXPECT_FALSE(check.decide(0.1f));
+                EXPECT_TRUE(check.open());
+            } else {
+                // ... where it is clearly the user: stays open.
+                EXPECT_EQ(check.speech().size(), 16000u * 4 / 5);
+                EXPECT_FALSE(check.decide(0.5f));
+            }
+        }
+    }
+    EXPECT_EQ(checks, 2);
+    EXPECT_EQ(check.gate(), VoiceCheck::Gate::Open);
 }
 
 TEST(SpeakerCheck, UnclearTrialReopensOnOneClearCheck) {

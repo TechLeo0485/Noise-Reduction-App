@@ -1,6 +1,7 @@
 #include "app/EngineController.h"
 
 #include "core/DspMath.h"
+#include "core/RealtimeThread.h"
 #include "diagnostics/LoopbackLatencyTester.h"
 #include "diagnostics/Logger.h"
 #include "diagnostics/VoicePlayback.h"
@@ -83,6 +84,10 @@ EngineController::EngineController(QObject* parent) : QObject(parent), settingsP
     Logger::instance().setLevel(settings_.logLevel);
     settings_.applyParams(params_);
     logInfo("VoiceStudio starting");
+    // Before any audio or model thread starts, so all of them inherit the priority.
+    const ProcessPriorityResult priority = raiseProcessPriority();
+    logInfo(std::string("Priority: CPU ") + (priority.cpu ? "high" : "normal (could not raise)") + ", power throttling " +
+            (priority.powerThrottlingOff ? "off" : "unchanged") + ", GPU " + (priority.gpu ? "high" : "normal (could not raise)"));
 
     // GPUs can run voice isolation when the DirectML runtime ships next to the exe.
     const std::filesystem::path exeDir = QCoreApplication::applicationDirPath().toStdWString();

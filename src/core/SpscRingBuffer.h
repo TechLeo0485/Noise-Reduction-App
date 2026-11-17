@@ -73,6 +73,15 @@ public:
         return n;
     }
 
+    // Copies up to `maxCount` items without consuming them. Returns the number copied.
+    std::size_t peek(T* out, std::size_t maxCount) const noexcept {
+        const std::size_t r = read_.load(std::memory_order_relaxed);
+        const std::size_t w = write_.load(std::memory_order_acquire);
+        const std::size_t n = std::min(maxCount, w - r);
+        copyOut(r, out, n);
+        return n;
+    }
+
     // Discards up to `count` items. Returns the number discarded.
     std::size_t skip(std::size_t count) noexcept {
         const std::size_t r = read_.load(std::memory_order_relaxed);

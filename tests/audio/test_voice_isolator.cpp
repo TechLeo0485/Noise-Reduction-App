@@ -302,6 +302,20 @@ TEST(VoiceIsolator, RaisesChunkSizeWhenTheCpuFallsBehind) {
     EXPECT_EQ(st.state, IsolationState::Ready);
 }
 
+TEST(VoiceIsolator, NeverSwitchesToLightIsolationByItself) {
+    VoiceIsolator isolator;
+    isolator.setMaxLatencyMs(50.0); // no larger chunk fits: the monitor cannot adapt
+    isolator.initializeWithModel(identity(nullptr, 25), 2);
+    const std::vector<float> x = testSignal(48000 * 6);
+    const RunResult r = run(isolator, x, true, 10);
+    expectFailClosed(x, r);
+    const IsolationStatus st = isolator.status();
+    EXPECT_FALSE(st.light) << "a busy computer must not swap the selected model for light isolation";
+    EXPECT_FALSE(st.lightFallback);
+    EXPECT_EQ(st.framesPerRun, 2);
+    EXPECT_EQ(st.state, IsolationState::Ready);
+}
+
 TEST(VoiceIsolator, PersistentInferenceFailureEndsInErrorStateAndStaysSilent) {
     std::atomic<int> failAfter{0};
     VoiceIsolator isolator;
