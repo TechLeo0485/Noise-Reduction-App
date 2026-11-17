@@ -51,15 +51,22 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
-      # The VB-CABLE driver pack and the VoxLock / CAM++ models (the downloads from smaller sites). Both are checked
-      # against their pinned SHA-256 (scripts/package.ps1, cmake/Dependencies.cmake), so a cached copy is safe.
+      # The VB-CABLE driver pack, the VoxLock / CAM++ models, and the dependency archives that configure downloads
+      # (GitHub source tarballs, the ONNX Runtime and DirectML NuGet packages). All are checked against their pinned
+      # SHA-256 (scripts/package.ps1, cmake/Dependencies.cmake), so a cached copy is safe, and CMake skips the download
+      # of an archive that is already there with the right hash - a GitHub outage (e.g. codeload HTTP 500) then does
+      # not break the release. Only the archives are cached, not CMake's stamp files.
       - name: Cache downloads
         uses: actions/cache@v4
         with:
           path: |
             build/_deps/vbcable/*.zip
             build/ninja-release/_deps/voxlock-models
-          key: downloads-${{ hashFiles('cmake/Dependencies.cmake', 'scripts/package.ps1') }}
+            build/ninja-release/_deps/*-subbuild/*-populate-prefix/src/*.tar.gz
+            build/ninja-release/_deps/*-subbuild/*-populate-prefix/src/*.zip
+          key: downloads-v2-${{ hashFiles('cmake/Dependencies.cmake', 'scripts/package.ps1') }}
+          restore-keys: |
+            downloads-v2-
 
       # Optional: the VoiceStudio Virtual Microphone. Its signed package is built on a PC with the WDK
       # (scripts/build-driver.ps1); commit those files to installer/driver-package to include it in setup.

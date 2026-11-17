@@ -58,8 +58,17 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
 
 Push-Location $root
 try {
-    cmake --preset $preset
-    if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+    # Configure downloads the dependencies (GitHub, NuGet, Hugging Face). Those servers fail now and then (HTTP 500,
+    # timeouts); a failed download is simply tried again on the next configure, so retry a few times before giving up.
+    $attempts = 3
+    for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+        cmake --preset $preset
+        if ($LASTEXITCODE -eq 0) { break }
+        if ($attempt -eq $attempts) { throw "CMake configure failed (after $attempts attempts)" }
+        $wait = 20 * $attempt
+        Write-Warning "CMake configure failed (attempt $attempt of $attempts) - often a download error; trying again in $wait s"
+        Start-Sleep -Seconds $wait
+    }
     cmake --build --preset $preset
     if ($LASTEXITCODE -ne 0) { throw "Build failed" }
     if (-not $NoTests) {
