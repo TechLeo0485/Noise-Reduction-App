@@ -49,6 +49,13 @@ constexpr int kChunkSizes[] = {2, 3, 4, 6, 8, 12, 16};
 double isolationDelayMs(int k) {
     return 24.0 + k * kHopMs + 10.0 + 2.0 + 20.0 + 8.0;
 }
+// The same, once the time one inference takes is known: a chunk's audio leaves only after it has been computed. The
+// 20 ms cushion above covers inferences up to 20 ms (K = 2 on a fast CPU); a slower one adds its excess. Without this,
+// a large chunk on a slow CPU (48 ms chunks taking 30-48 ms each) looked like it fitted a ~110 ms limit but needed
+// ~150 ms, and the latency cap then dropped audio over and over: constant cuts.
+double isolationDelayMs(int k, double inferenceMs) {
+    return isolationDelayMs(k) + std::max(0.0, inferenceMs - 20.0);
+}
 // Calibration: runs per setting, bounded in time so a slow computer is not measured for minutes.
 constexpr int kCalibrationWarmup = 6;
 constexpr int kCalibrationRuns = 40;
@@ -113,6 +120,10 @@ public:
         const auto us = static_cast<float>(HighResClock::ticksToMicroseconds(HighResClock::now() - start));
         metrics_.lastInferenceUs.store(us, std::memory_order_relaxed);
         metrics_.inferenceUs.tryPush(&us, 1);
+        // Recent peak: jumps up at once, falls back by ~0.3 % per inference (a few seconds), so the monitor sees how
+        // slow inference is right now, spikes included (only this thread writes it).
+        const float peak = metrics_.inferencePeakUs.load(std::memory_order_relaxed);
+        metrics_.inferencePeakUs.store(std::max(us, peak * 0.997f), std::memory_order_relaxed);
         return ok;
     }
 
@@ -569,7 +580,9 @@ int pickProcessor(const std::vector<ProcessorTrial>& trials) {
 
 void VoiceIsolator::setMaxLatencyMs(double ms) noexcept {
     const auto samples = static_cast<int>(std::lround(ms * kSampleRate / 1000.0));
-    maxLatencySamples_.store(std::clamp(samples, kMinMaxLatency, kMaxMaxLatency), std::memory_order_relaxed);
+    const int clamped = std::clamp(samples, kMinMaxLatency, kMaxMaxLatency);
+    maxLatencySamples_.store(clamped, std::memory_order_relaxed);
+    capLatencySamples_.store(clamped, std::memory_order_relaxed); // the monitor raises it again if the chunk needs it
 }
 
 double VoiceIsolator::maxLatencyMs() const noexcept {
@@ -765,7 +778,10 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
                 measured.threads = threads;
                 measured.p50Ms = times[times.size() / 2];
                 measured.p95Ms = times[times.size() * 95 / 100];
-                measured.realTime = measured.p50Ms <= 0.75 * budget && measured.p95Ms <= budget;
+                // Keeps up, and its delay - the inference time included - fits the limit (else the latency cap would
+                // drop audio all the time).
+                measured.realTime = measured.p50Ms <= 0.75 * budget && measured.p95Ms <= budget &&
+                                    isolationDelayMs(k, measured.p95Ms) <= maxLatencyMs();
                 logInfo("Voice isolation calibration on " + processor.name + ", K=" + std::to_string(k) + ", " +
                         std::to_string(threads) + " threads: p50 " + std::to_string(measured.p50Ms) + " ms, p95 " +
                         std::to_string(measured.p95Ms) + " ms per " + std::to_string(budget) + " ms of audio");
@@ -944,8 +960,11 @@ void VoiceIsolator::useLightIsolation(const std::string& reason) {
 
 // Runs on the loader thread about once per second. Turns persistent problems into actions instead of
 // leaving the user with repeated dropouts or an unexplained silent microphone:
+//  - the latency cap follows the current chunk's real delay (inference included), so it never drops audio again and
+//    again to hold a limit the chunk cannot meet;
 //  - the worker keeps falling behind (several late chunks in 10 s): rebuild the session with the next larger
-//    chunk that fits the delay budget; if there is none, switch to light isolation (no model);
+//    chunk, but only if its delay - inference included - fits the limit; otherwise keep the chunk (the cushion
+//    absorbs it). The selected model is never swapped for light isolation;
 //  - inference keeps failing: stop with an error message (the output stays silent while enabled).
 void VoiceIsolator::monitor() {
     if (state() != IsolationState::Ready) {
@@ -979,20 +998,48 @@ void VoiceIsolator::monitor() {
     }
     const IsolationStatus st = status();
     const int k = st.framesPerRun;
+    // How long one inference takes right now (recent peak), else the calibration's p95.
+    double inferenceMs = metrics_.inferencePeakUs.load(std::memory_order_relaxed) / 1000.0;
+    if (inferenceMs <= 0.0) {
+        inferenceMs = st.calibrationP95Ms;
+    }
+    // The latency cap must leave room for the current chunk's real delay, inference included: below that it drops
+    // audio again and again (each drop is a cut in the voice). A few ms over the engine's budget are inaudible; cuts
+    // are not. Never above kMaxMaxLatency.
+    if (k > 0 && !st.light) {
+        const double neededMs = isolationDelayMs(k, inferenceMs) + 5.0;
+        const int needed = static_cast<int>(std::lround(neededMs * kSampleRate / 1000.0));
+        const int cap = std::clamp(std::max(maxLatencySamples_.load(std::memory_order_relaxed), needed), kMinMaxLatency,
+                                   kMaxMaxLatency);
+        if (capLatencySamples_.exchange(cap, std::memory_order_relaxed) != cap && cap > maxLatencySamples_.load()) {
+            logInfo("Voice isolation: delay limit raised to " + std::to_string(cap * 1000 / kSampleRate) + " ms for " +
+                    std::to_string(k * 8) + " ms chunks taking up to " + std::to_string(static_cast<int>(inferenceMs)) +
+                    " ms (instead of dropping audio)");
+        }
+    }
     if (sample.underruns - underrunsBefore < kUnderrunsToAdapt || k <= 0 || st.light) {
         return;
     }
+    // A larger chunk only helps if its delay - with its inference time, estimated from the current one per hop -
+    // still fits. Otherwise it only adds delay and makes the latency cap drop audio: stay, the cushion absorbs it.
     const std::vector<int> sizes = chunkSizesWithin(maxLatencyMs());
-    const auto larger = std::upper_bound(sizes.begin(), sizes.end(), k);
+    auto larger = std::upper_bound(sizes.begin(), sizes.end(), k);
+    if (larger != sizes.end() && isolationDelayMs(*larger, inferenceMs / k * *larger) > maxLatencyMs()) {
+        larger = sizes.end();
+    }
     if (larger == sizes.end()) {
-        // Even the largest chunk that fits the delay budget falls behind (a very busy computer). The selected model
-        // keeps running - it is never swapped for a weaker one automatically; the user is told why there are gaps.
-        logWarning("Voice isolation: " + std::to_string(sample.underruns - underrunsBefore) + " late chunks in 10 s with " +
-                   std::to_string(k * 8) + " ms chunks; keeping the selected model");
-        setStatus(IsolationState::Ready,
-                  "This computer is very busy, so there may be short gaps in your voice. Close other heavy programs, or "
-                  "choose a GPU in Setup.",
-                  false);
+        // No larger chunk fits (a very busy computer). The selected model keeps running - it is never swapped for a
+        // weaker one automatically; the user is told why there may be gaps (logged at most once a minute).
+        if (now - lastBusyWarning_ >= std::chrono::minutes(1)) {
+            lastBusyWarning_ = now;
+            logWarning("Voice isolation: " + std::to_string(sample.underruns - underrunsBefore) + " late chunks in 10 s with " +
+                       std::to_string(k * 8) + " ms chunks (inference up to " + std::to_string(static_cast<int>(inferenceMs)) +
+                       " ms); no larger chunk fits the delay limit, keeping the selected model");
+            setStatus(IsolationState::Ready,
+                      "This computer is very busy, so there may be short gaps in your voice. Close other heavy programs, "
+                      "or choose a GPU in Setup.",
+                      false);
+        }
         health_.clear();
         return;
     }
@@ -1215,7 +1262,7 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
             }
             if (!priming_) {
                 std::size_t fill = available;
-                const long long maxLatency = maxLatencySamples_.load(std::memory_order_relaxed);
+                const long long maxLatency = capLatencySamples_.load(std::memory_order_relaxed);
                 if (available >= n) {
                     // Hard limit: the isolated voice never falls further behind than the delay budget allows.
                     // Normally the slow trim below keeps it well under; this catches bursts after a stall.
@@ -1287,7 +1334,7 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
                     fillWindowFrames_ = 0;
                     framesSinceUnderrun_ = 0;
                     // Never grow the cushion beyond what the delay limit leaves after the chunk itself.
-                    const auto limit = static_cast<std::size_t>(maxLatencySamples_.load(std::memory_order_relaxed));
+                    const auto limit = static_cast<std::size_t>(capLatencySamples_.load(std::memory_order_relaxed));
                     const std::size_t used = n + burstSamples48k(k);
                     const std::size_t room = limit > used + kInitialMargin ? limit - used : kInitialMargin;
                     marginSamples_ = std::min({marginSamples_ + kMarginStep, kMaxMargin, room});
@@ -1374,6 +1421,7 @@ void VoiceIsolator::workerReset() {
     }
     down_.reset();
     up_.reset();
+    metrics_.inferencePeakUs.store(0.0f, std::memory_order_relaxed); // measured afresh for this model / chunk size
     // A fresh stream starts unmuted; the checker starts judging afresh, and older state resets are void.
     gateGain_ = 1.0f;
     gate_.store(kGateOpen, std::memory_order_release);

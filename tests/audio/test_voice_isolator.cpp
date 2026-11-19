@@ -22,7 +22,8 @@ constexpr std::size_t kFrame = VoiceIsolator::kFrameSize;
 // every delivered frame can be checked against the delayed microphone signal.
 class IdentityModel final : public voxlock::IChunkModel {
 public:
-    IdentityModel(int k, std::atomic<int>* failAfter, int sleepMs) : k_(k), failAfter_(failAfter), sleepMs_(sleepMs) {
+    IdentityModel(int k, std::atomic<int>* failAfter, int sleepMs, int msPerHop = 0)
+        : k_(k), failAfter_(failAfter), sleepMs_(sleepMs), msPerHop_(msPerHop) {
         for (int i = 0; i < voxlock::kNfft; ++i) {
             const auto w = static_cast<float>(0.5 - 0.5 * std::cos(test::kTwoPi * i / voxlock::kNfft));
             window2_.push_back(w * w);
@@ -32,6 +33,12 @@ public:
     bool run(const float* wav, const float*, const float*, float* frames, float*, float*) noexcept override {
         if (sleepMs_ > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs_));
+        }
+        if (msPerHop_ > 0) {
+            // Cost that grows with the chunk, like a real CPU (spin: sleep is too coarse on Windows).
+            const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(msPerHop_ * k_);
+            while (std::chrono::steady_clock::now() < until) {
+            }
         }
         if (failAfter_ != nullptr && failAfter_->fetch_sub(1) <= 0) {
             return false;
@@ -49,11 +56,17 @@ private:
     int k_;
     std::atomic<int>* failAfter_;
     int sleepMs_;
+    int msPerHop_;
     std::vector<float> window2_;
 };
 
 VoiceIsolator::ModelFactory identity(std::atomic<int>* failAfter = nullptr, int sleepMs = 0) {
     return [failAfter, sleepMs](int k) { return std::make_unique<IdentityModel>(k, failAfter, sleepMs); };
+}
+
+// A model whose inference takes msPerHop per 8 ms hop: larger chunks are no cheaper per second of audio.
+VoiceIsolator::ModelFactory slowPerHop(int msPerHop) {
+    return [msPerHop](int k) { return std::make_unique<IdentityModel>(k, nullptr, 0, msPerHop); };
 }
 
 // Speech-band test signal (well inside the 16 kHz model band).
@@ -146,11 +159,13 @@ TEST(VoiceIsolator, DeliversDelayedIsolatedVoiceUnderLatencyTarget) {
     EXPECT_GT(isolator.metrics().isolatedFrames.load(), 0u);
 }
 
-TEST(VoiceIsolator, DelayNeverExceedsTheLimit) {
+TEST(VoiceIsolator, DelayStaysWithinWhatTheChunkNeeds) {
     VoiceIsolator isolator;
     isolator.setMaxLatencyMs(55.0);
     EXPECT_NEAR(isolator.maxLatencyMs(), 55.0, 0.1);
-    // A worker that is sometimes late (12 ms per 16 ms chunk, frames fed in bursts) grows the cushion.
+    // A worker that is sometimes late (12 ms per 16 ms chunk, frames fed in bursts) grows the cushion. The limit
+    // (55 ms) is below what 16 ms chunks need (~85 ms): the delay may grow to that, but never further - and audio is
+    // not dropped over and over to hold an impossible limit.
     isolator.initializeWithModel(identity(nullptr, 12), 2);
     const std::vector<float> x = testSignal(48000 * 3);
     const RunResult r = run(isolator, x, true, 1);
@@ -158,10 +173,26 @@ TEST(VoiceIsolator, DelayNeverExceedsTheLimit) {
     for (const auto& i : r.info) {
         if (i.delivering) {
             ++delivered;
-            ASSERT_LE(i.latencySamples, 55 * 48) << "the isolated voice fell further behind than allowed";
+            ASSERT_LE(i.latencySamples, 90 * 48) << "the isolated voice fell further behind than its chunk needs";
         }
     }
     EXPECT_GT(delivered, r.info.size() / 3);
+}
+
+TEST(VoiceIsolator, DoesNotRaiseTheChunkBeyondWhatFitsTheDelayLimit) {
+    // Like a slow CPU: 15 ms per 8 ms hop at every chunk size, so larger chunks only add delay. Before, the monitor
+    // kept raising the chunk (to 48 ms) whose real delay no longer fitted the limit, and the latency cap then dropped
+    // audio constantly. Now it stops at the largest chunk whose delay, inference included, fits.
+    VoiceIsolator isolator;
+    isolator.setMaxLatencyMs(120.0);
+    isolator.initializeWithModel(slowPerHop(15), 2);
+    const std::vector<float> x = testSignal(48000 * 6);
+    const RunResult r = run(isolator, x, true, 10);
+    expectFailClosed(x, r);
+    const IsolationStatus st = isolator.status();
+    EXPECT_LE(st.framesPerRun, 3) << "a chunk whose delay does not fit the limit was chosen";
+    EXPECT_FALSE(st.light);
+    EXPECT_EQ(st.state, IsolationState::Ready);
 }
 
 TEST(VoiceIsolator, DelayLimitIsClampedToASaneRange) {

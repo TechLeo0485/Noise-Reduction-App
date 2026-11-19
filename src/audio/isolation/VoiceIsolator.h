@@ -197,6 +197,7 @@ public:
         std::atomic<bool> voiceGateOpen{true};        // false: muted because someone else is speaking
         std::atomic<float> latencyMs{0.0f};           // measured delay of the isolated voice (48 kHz in/out)
         std::atomic<float> lastInferenceUs{0.0f};
+        std::atomic<float> inferencePeakUs{0.0f};    // recent peak of the per-chunk inference time (decays)
         std::atomic<bool> delivering{false};
         SpscRingBuffer<float> inferenceUs{1024};     // per chunk.onnx call, drained by the UI
     };
@@ -262,6 +263,7 @@ private:
         std::uint64_t failures;
     };
     std::deque<HealthSample> health_;
+    std::chrono::steady_clock::time_point lastBusyWarning_{}; // monitor: "too busy" logged at most once a minute
 
     // Loader thread
     std::mutex loaderMutex_;
@@ -339,6 +341,9 @@ private:
     bool lastFrameDry_ = false;  // the previous frame passed the microphone through (isolation off)
     int lastLatencySamples_ = 0;
     std::atomic<int> maxLatencySamples_{7200};    // 150 ms until the engine sets its budget
+    // The cap process() applies: maxLatencySamples_, raised by the monitor when the current chunk's real delay
+    // (inference included) needs more - dropping audio to hold the budget would cut the voice.
+    std::atomic<int> capLatencySamples_{7200};
     int framesSinceUnderrun_ = 0;                 // the safety cushion shrinks again after a calm stretch
     // Latency trimming: the start-up cushion assumes the worst phase between 10 ms frames and 8 ms
     // hops; once running, slack above the safety margin is dropped during a quiet moment.
