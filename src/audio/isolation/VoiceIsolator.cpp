@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <random>
 
 namespace vs {
@@ -63,6 +64,8 @@ constexpr double kCalibrationSeconds = 1.5;
 // Larger chunks cut the cost per second of audio by at most about this factor against K = 2 (see above): a
 // computer that needs more than 1 / 0.45 of real time at K = 2 cannot keep up at any size.
 constexpr double kBestChunkGain = 0.45;
+// A robust setting needs at most this share of the chunk's duration for a typical inference (see calibration).
+constexpr double kRobustLoad = 0.6;
 
 // The chunk sizes whose delay fits `maxDelayMs` (the smallest is always allowed).
 std::vector<int> chunkSizesWithin(double maxDelayMs) {
@@ -76,6 +79,7 @@ std::vector<int> chunkSizesWithin(double maxDelayMs) {
 }
 constexpr std::uint64_t kUnderrunsToAdapt = 4; // late chunks within kAdaptWindow that trigger a larger chunk
 constexpr auto kAdaptWindow = std::chrono::seconds(10);
+constexpr auto kStepDownCalm = std::chrono::minutes(5); // no late chunk for this long: back to the calibrated chunk
 constexpr std::uint64_t kFailuresToStop = 3;   // inference errors within kFailureWindow that end isolation
 constexpr auto kFailureWindow = std::chrono::seconds(30);
 constexpr int kTestFramesPerRun = 8;           // offline voice-sample tests: large chunks, fastest per second of audio
@@ -84,7 +88,11 @@ constexpr std::size_t kCheckRingCapacity = voxlock::kSampleRate * 2;       // 2 
 constexpr std::size_t kCheckBlock = 1600;      // 16 kHz samples the checker takes at a time
 constexpr float kGateStep = 1.0f / 320.0f;     // the voice check mutes over 20 ms ...
 constexpr float kGateOpenStep = 1.0f / 80.0f;  // ... and unmutes over 5 ms (keeps the start of a word)
-constexpr double kOnsetMaxCrest2 = 100.0;      // peak / RMS above 20 dB: a click, not the start of speech
+constexpr double kOnsetMaxCrest2 = 100.0;
+constexpr int kMaxConcealFrames = 2;
+constexpr int kQuietFramesForSwitch = 30;      // 0.3 s of quiet output: a pause in which a planned restart is unheard
+constexpr int kDeferRaiseFrames = 300;         // a larger chunk (falling behind) waits at most 3 s for a pause ...
+constexpr int kDeferStepDownFrames = 6000;     // ... going back to the smaller one (not urgent) up to 60 s           // a late chunk is concealed for up to 20 ms, then silence      // peak / RMS above 20 dB: a click, not the start of speech
 constexpr int kGateOpen = static_cast<int>(voxlock::VoiceCheck::Gate::Open);
 constexpr int kGateOnSpeech = static_cast<int>(voxlock::VoiceCheck::Gate::OpenOnSpeech);
 
@@ -122,8 +130,11 @@ public:
         metrics_.inferenceUs.tryPush(&us, 1);
         // Recent peak: jumps up at once, falls back by ~0.3 % per inference (a few seconds), so the monitor sees how
         // slow inference is right now, spikes included (only this thread writes it).
-        const float peak = metrics_.inferencePeakUs.load(std::memory_order_relaxed);
-        metrics_.inferencePeakUs.store(std::max(us, peak * 0.997f), std::memory_order_relaxed);
+        // Stored per hop, so it stays meaningful while the chunk size changes (a peak of 16 ms chunks read as if it
+        // were one of 24 ms chunks made a larger chunk look cheaper than it is).
+        const float perHop = us / static_cast<float>(std::max(1, inner_->framesPerRun()));
+        const float peak = metrics_.inferencePeakUsPerHop.load(std::memory_order_relaxed);
+        metrics_.inferencePeakUsPerHop.store(std::max(perHop, peak * 0.997f), std::memory_order_relaxed);
         return ok;
     }
 
@@ -535,15 +546,29 @@ void VoiceIsolator::deleteEnrollment() {
     });
 }
 
-void VoiceIsolator::publish(std::unique_ptr<voxlock::IChunkModel> model, int framesPerRun) {
+void VoiceIsolator::publish(std::unique_ptr<voxlock::IChunkModel> model, int framesPerRun, int deferFrames) {
     {
         std::lock_guard lock(modelMutex_);
         pendingModel_ = std::move(model);
         pendingFramesPerRun_ = framesPerRun;
         pendingClear_ = false;
     }
+    // Switching restarts the stream (~0.1 s of silence). An optional switch waits for a pause in the voice - up to
+    // `deferFrames` 10 ms frames - so that silence falls where nobody hears it.
+    deferFrames_.store(deferFrames, std::memory_order_release);
     modelReady_.store(true, std::memory_order_release);
     modelGeneration_.fetch_add(1, std::memory_order_acq_rel); // the capture thread restarts the stream with it
+    if (wakeEvent_ != nullptr) {
+        SetEvent(wakeEvent_);
+    }
+}
+
+void VoiceIsolator::swapInPlace(std::unique_ptr<voxlock::IChunkModel> model) {
+    {
+        std::lock_guard lock(modelMutex_);
+        hotModel_ = std::move(model);
+    }
+    hotPending_.store(true, std::memory_order_release);
     if (wakeEvent_ != nullptr) {
         SetEvent(wakeEvent_);
     }
@@ -564,7 +589,9 @@ int pickProcessor(const std::vector<ProcessorTrial>& trials) {
         const double headroom = t.p95Ms / (t.framesPerRun * kHopMs);
         const double bestHeadroom = b.p95Ms / (b.framesPerRun * kHopMs);
         bool better = false;
-        if (t.realTime != b.realTime) {
+        if (t.robust != b.robust) {
+            better = t.robust;
+        } else if (t.realTime != b.realTime) {
             better = t.realTime;
         } else if (t.realTime && t.framesPerRun != b.framesPerRun) {
             better = t.framesPerRun < b.framesPerRun; // lower latency
@@ -724,12 +751,25 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
         if (processor.dmlDevice < 0 && logicalCores >= 6) {
             threadCounts.push_back(kMoreThreads);
         }
-        // Big CPUs: also try half the logical cores (up to 8), so a busy or slower-per-core CPU can still keep up by
-        // using more of its cores. Measured like the others; only used when fewer threads do not keep up.
-        if (const int many = static_cast<int>(std::min(8u, logicalCores / 2)); processor.dmlDevice < 0 && many > kMoreThreads) {
-            threadCounts.push_back(many);
+        // (8 threads were tried too: no faster than 4 on an i7-12700KF, and worse at the tail.)
+        int extraSizes = 0; // sizes measured after one that only just keeps up, looking for a robust one
+        // Automatic choice: once the CPU (measured first) is robust at K, a GPU can only win with a robust result at K
+        // or below (pickProcessor prefers the smaller chunk), so larger sizes are not measured on it. Saves several
+        // seconds of calibration on computers whose graphics card is slower than the CPU for this model.
+        int largestUseful = std::numeric_limits<int>::max();
+        if (preferred == "auto" && processor.dmlDevice >= 0) {
+            for (const ProcessorTrial& t : trials) {
+                if (t.id == "cpu" && t.robust) {
+                    largestUseful = t.framesPerRun;
+                }
+            }
         }
         for (int k : sizes) {
+            if (k > largestUseful) {
+                logInfo("Voice isolation: " + processor.name + " not measured beyond " + std::to_string(largestUseful * 8) +
+                        " ms chunks (the CPU already runs the model robustly there)");
+                break;
+            }
             for (int threads : threadCounts) {
                 voxlock::ChunkModelOptions options;
                 options.framesPerRun = k;
@@ -778,26 +818,35 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
                 measured.threads = threads;
                 measured.p50Ms = times[times.size() / 2];
                 measured.p95Ms = times[times.size() * 95 / 100];
+                measured.p99Ms = times[std::min(times.size() - 1, times.size() * 99 / 100)];
                 // Keeps up, and its delay - the inference time included - fits the limit (else the latency cap would
                 // drop audio all the time).
                 measured.realTime = measured.p50Ms <= 0.75 * budget && measured.p95Ms <= budget &&
                                     isolationDelayMs(k, measured.p95Ms) <= maxLatencyMs();
+                // Robust: keeps up with room to spare for the rest of the computer (a game, a browser) - calibration
+                // runs on a quiet moment, real use does not - and even the slowest inferences finish in time. A chunk
+                // that only just keeps up (72 % at 16 ms on an i7-12700KF) falls behind as soon as anything else runs.
+                measured.robust = measured.realTime && measured.p50Ms <= kRobustLoad * budget &&
+                                  measured.p99Ms <= budget && isolationDelayMs(k, measured.p99Ms) <= maxLatencyMs();
                 logInfo("Voice isolation calibration on " + processor.name + ", K=" + std::to_string(k) + ", " +
                         std::to_string(threads) + " threads: p50 " + std::to_string(measured.p50Ms) + " ms, p95 " +
-                        std::to_string(measured.p95Ms) + " ms per " + std::to_string(budget) + " ms of audio");
-                // Keep the best measurement so far: one that keeps up, else the one with the most headroom.
-                const bool better = !best || (measured.realTime && !trial.realTime) ||
-                                    (measured.realTime == trial.realTime &&
-                                     measured.p95Ms / budget < trial.p95Ms / (trial.framesPerRun * kHopMs));
+                        std::to_string(measured.p95Ms) + " ms, p99 " + std::to_string(measured.p99Ms) + " ms per " +
+                        std::to_string(budget) + " ms of audio" + (measured.robust ? " (robust)" : measured.realTime ? " (keeps up)" : ""));
+                // Keep the best measurement so far: robust, else keeps up, else the most headroom; within the same
+                // class the one whose slowest inferences leave the most room.
+                const auto rank = [](const ProcessorTrial& t) { return t.robust ? 2 : t.realTime ? 1 : 0; };
+                const bool better = !best || rank(measured) > rank(trial) ||
+                                    (rank(measured) == rank(trial) &&
+                                     measured.p99Ms / budget < trial.p99Ms / (trial.framesPerRun * kHopMs));
                 if (better) {
                     trial = measured;
                     best = std::move(model);
                 }
-                if (trial.realTime) {
-                    break;
-                }
             }
-            if (!trial.error.empty() || trial.realTime) {
+            // Every thread count is measured at this size (4 threads are much steadier than 2 from 24 ms chunks on).
+            // Stop at the first robust size; a size that only just keeps up is kept unless one of the next two is
+            // robust (8 or 16 ms more delay buys a large margin against dropouts).
+            if (!trial.error.empty() || trial.robust || (trial.realTime && ++extraSizes > 2)) {
                 break;
             }
             // Hopeless: even the largest chunks would not make this processor fast enough.
@@ -850,6 +899,8 @@ bool VoiceIsolator::calibrateAndPublish(const voxlock::EnrollmentTensors& tensor
     }
     publish(std::move(models[static_cast<std::size_t>(chosen)]), t.framesPerRun);
     currentDmlDevice_ = processor.dmlDevice;
+    calibratedFramesPerRun_ = t.framesPerRun;
+    lastLateTime_ = std::chrono::steady_clock::now();
     health_.clear();
     logInfo("Voice isolation (" + modelId + ") runs on " + processor.name + " with " + std::to_string(t.framesPerRun * 8) + " ms chunks" +
             (preferred == "auto" ? " (chosen automatically)" : ""));
@@ -932,6 +983,7 @@ std::filesystem::path VoiceIsolator::microphoneFile() const {
 void VoiceIsolator::useLightIsolation(const std::string& reason) {
     publish(std::make_unique<voxlock::PassThroughChunkModel>(kChunkSizes[0]), kChunkSizes[0]);
     currentDmlDevice_ = -1;
+    calibratedFramesPerRun_ = 0;
     health_.clear();
     const bool chosen = reason.empty();
     if (chosen) {
@@ -997,9 +1049,15 @@ void VoiceIsolator::monitor() {
         }
     }
     const IsolationStatus st = status();
-    const int k = st.framesPerRun;
-    // How long one inference takes right now (recent peak), else the calibration's p95.
-    double inferenceMs = metrics_.inferencePeakUs.load(std::memory_order_relaxed) / 1000.0;
+    // A switch still waiting for a pause: the previous chunk size is running. Size the cap for whichever is larger, and
+    // make no further change until the switch is live.
+    const bool switchPending =
+        modelGeneration_.load(std::memory_order_acquire) != appliedGeneration_.load(std::memory_order_acquire);
+    const int k = switchPending ? std::max(st.framesPerRun, activeFramesPerRun_.load(std::memory_order_acquire))
+                                : st.framesPerRun;
+    // How long one inference of k hops takes right now (recent peak per hop), else the calibration's p95.
+    const double perHopMs = metrics_.inferencePeakUsPerHop.load(std::memory_order_relaxed) / 1000.0;
+    double inferenceMs = perHopMs * k;
     if (inferenceMs <= 0.0) {
         inferenceMs = st.calibrationP95Ms;
     }
@@ -1017,14 +1075,77 @@ void VoiceIsolator::monitor() {
                     " ms (instead of dropping audio)");
         }
     }
+    if (sample.underruns != lastUnderrunsSeen_) {
+        lastUnderrunsSeen_ = sample.underruns;
+        lastLateTime_ = now;
+    }
+    if (switchPending) {
+        return;
+    }
+#if defined(VOICESTUDIO_HAS_VOXLOCK)
+    // Back to the calibrated chunk size after a calm stretch: a larger chunk chosen while the computer was busy (a
+    // game, an update) would otherwise add its delay for the rest of the session. If it falls behind again, the
+    // steps below raise it again (late chunks meanwhile are concealed).
+    if (!testFactory_ && haveTensors_ && runtime_ && !st.light && calibratedFramesPerRun_ > 0 &&
+        k > calibratedFramesPerRun_ && now - lastLateTime_ >= kStepDownCalm) {
+        voxlock::ChunkModelOptions options;
+        options.framesPerRun = calibratedFramesPerRun_;
+        options.threads = currentDmlDevice_ >= 0 ? 1 : std::max(1, st.threads);
+        options.dmlDevice = currentDmlDevice_;
+        std::string error;
+        lastLateTime_ = now; // one attempt per calm stretch
+        if (auto model = createModel(selectedModel(), tensors_, options, error)) {
+            const int back = calibratedFramesPerRun_;
+            publish(std::move(model), back, kDeferStepDownFrames);
+            logInfo("Voice isolation: calm for 5 minutes; back to " + std::to_string(back * 8) + " ms chunks (" +
+                    std::to_string((k - back) * 8) + " ms less delay)");
+            {
+                std::lock_guard lock(statusMutex_);
+                status_.framesPerRun = back;
+            }
+            setStatus(IsolationState::Ready, "Isolating your voice.", false);
+            health_.clear();
+            return;
+        }
+        logWarning("Voice isolation could not return to the smaller chunk: " + error);
+    }
+#endif
     if (sample.underruns - underrunsBefore < kUnderrunsToAdapt || k <= 0 || st.light) {
         return;
     }
+#if defined(VOICESTUDIO_HAS_VOXLOCK)
+    // First more threads at the same chunk size - no extra delay. On an i7-12700KF 4 threads instead of 2 cut the
+    // slowest inferences at 24 ms chunks from 24 to 16 ms.
+    if (!testFactory_ && haveTensors_ && runtime_ && currentDmlDevice_ < 0 && st.threads > 0 &&
+        st.threads < kMoreThreads && std::thread::hardware_concurrency() >= 6) {
+        voxlock::ChunkModelOptions options;
+        options.framesPerRun = k;
+        options.threads = kMoreThreads;
+        std::string error;
+        if (auto model = createModel(selectedModel(), tensors_, options, error)) {
+            swapInPlace(std::move(model)); // same chunk size: no restart, no gap
+            logWarning("Voice isolation fell behind (" + std::to_string(sample.underruns - underrunsBefore) +
+                       " late chunks in 10 s); now " + std::to_string(kMoreThreads) + " threads at " + std::to_string(k * 8) +
+                       " ms chunks");
+            {
+                std::lock_guard lock(statusMutex_);
+                status_.threads = kMoreThreads;
+                ++status_.adaptations;
+            }
+            health_.clear();
+            return;
+        }
+        logWarning("Voice isolation could not use more threads: " + error);
+    }
+#endif
     // A larger chunk only helps if its delay - with its inference time, estimated from the current one per hop -
     // still fits. Otherwise it only adds delay and makes the latency cap drop audio: stay, the cushion absorbs it.
     const std::vector<int> sizes = chunkSizesWithin(maxLatencyMs());
     auto larger = std::upper_bound(sizes.begin(), sizes.end(), k);
-    if (larger != sizes.end() && isolationDelayMs(*larger, inferenceMs / k * *larger) > maxLatencyMs()) {
+    if (perHopMs <= 0.0) {
+        return; // no inference measured yet for this setting (just restarted): decide once there is data
+    }
+    if (larger != sizes.end() && isolationDelayMs(*larger, perHopMs * *larger) > maxLatencyMs()) {
         larger = sizes.end();
     }
     if (larger == sizes.end()) {
@@ -1062,7 +1183,7 @@ void VoiceIsolator::monitor() {
         health_.clear();
         return;
     }
-    publish(std::move(model), next);
+    publish(std::move(model), next, kDeferRaiseFrames);
     logWarning("Voice isolation fell behind (" + std::to_string(sample.underruns - underrunsBefore) +
                " late chunks in 10 s); chunk size raised to " + std::to_string(next * 8) + " ms");
     {
@@ -1163,6 +1284,8 @@ void VoiceIsolator::reset() noexcept {
     restartPending_ = false;
     priming_ = true;
     fadeIn_ = 0;
+    lastOutValid_ = false;
+    concealed_ = 0;
     metrics_.delivering.store(false, std::memory_order_relaxed);
 }
 
@@ -1210,6 +1333,7 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
         }
         wasEnabled_ = false;
         lastFrameDry_ = true;
+        lastOutValid_ = false; // never conceal with audio from before isolation was switched off
         info.delivering = false;
         info.latencySamples = 0;
         metrics_.delivering.store(false, std::memory_order_relaxed);
@@ -1225,8 +1349,17 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
     }
     const std::uint32_t generation = modelGeneration_.load(std::memory_order_acquire);
     if (generation != seenGeneration_) {
-        seenGeneration_ = generation; // a new voice (or none): start a fresh stream with it
-        requestRestart();
+        // An optional switch (deferFrames_ > 0) waits for 0.3 s of quiet output - a pause between sentences - so its
+        // restart is not heard; after deferFrames_ frames it happens anyway. Meanwhile the current model keeps running.
+        const int defer = deferFrames_.load(std::memory_order_acquire);
+        if (defer > 0 && quietFrames_ < kQuietFramesForSwitch && deferredFrames_ < defer && !priming_ && !restartPending_) {
+            ++deferredFrames_;
+        } else {
+            seenGeneration_ = generation; // a new voice (or none), or a new chunk size: start a fresh stream with it
+            appliedGeneration_.store(generation, std::memory_order_release);
+            deferredFrames_ = 0;
+            requestRestart();
+        }
     }
     if (workerFailed_.load(std::memory_order_acquire) && !restartPending_) {
         requestRestart(); // inference failed: start over, silent meanwhile
@@ -1234,6 +1367,7 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
     if (restartPending_ && ackedEpoch_.load(std::memory_order_acquire) == epoch_) {
         outRing_.skip(outRing_.available()); // anything still queued predates the restart
         restartPending_ = false;
+        lastOutValid_ = false;
         priming_ = true;
         pushed_ = popped_ = 0;
         minFill_ = SIZE_MAX;
@@ -1246,6 +1380,7 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
     }
 
     bool delivered = false;
+    bool late = false; // the worker is late: this frame is concealed if possible (below)
     const int k = activeFramesPerRun_.load(std::memory_order_acquire);
     if (!restartPending_ && k > 0 && modelReady_.load(std::memory_order_acquire)) {
         if (!inRing_.tryPush(frame, n)) {
@@ -1329,6 +1464,7 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
                     // The worker is late. This frame is silence (not the microphone) and the isolated voice
                     // continues one frame later; keep a larger cushion from now on.
                     metrics_.underruns.fetch_add(1, std::memory_order_relaxed);
+                    late = true;
                     pendingTrim_ = 0;
                     minFill_ = SIZE_MAX;
                     fillWindowFrames_ = 0;
@@ -1354,13 +1490,34 @@ void VoiceIsolator::process(float* frame, bool enabled, IsolationFrameInfo& info
             peak = std::max(peak, std::fabs(scratch_[i]));
         }
         quietFrames_ = peak < kQuietPeak ? quietFrames_ + 1 : 0;
+        std::copy(frame, frame + n, lastOut_.begin()); // for concealment, should the next frame be late
+        lastOutValid_ = true;
+        concealed_ = 0;
         lastLatencySamples_ = static_cast<int>(pushed_ - popped_);
         metrics_.isolatedFrames.fetch_add(1, std::memory_order_relaxed);
         metrics_.latencyMs.store(static_cast<float>(lastLatencySamples_) * 1000.0f / kSampleRate, std::memory_order_relaxed);
+    } else if (late && lastOutValid_ && concealed_ < kMaxConcealFrames) {
+        // Gap concealment: a late chunk is heard as a short gap. Instead of 10 ms of silence, play the last frame of
+        // isolated voice mirrored in time, fading out over kMaxConcealFrames frames. Mirrored, it starts with the
+        // sample that was just played (no click), and the next mirror of it runs forwards again, equally seamless.
+        // Only isolated output is reused - never the microphone - so it stays fail-closed. The isolated voice then
+        // continues (fading in) one frame later, as before.
+        const float total = static_cast<float>(kMaxConcealFrames * n);
+        for (std::size_t i = 0; i < n; ++i) {
+            const float g = 1.0f - static_cast<float>(static_cast<std::size_t>(concealed_) * n + i + 1) / total;
+            frame[i] = lastOut_[n - 1 - i] * g;
+        }
+        std::copy(frame, frame + n, lastOut_.begin());
+        ++concealed_;
+        fadeIn_ = 0;
+        quietFrames_ = 0;
+        info.concealed = true;
+        metrics_.concealedFrames.fetch_add(1, std::memory_order_relaxed);
     } else {
         for (std::size_t i = 0; i < n; ++i) {
             frame[i] = i < dryFade ? frame[i] * (1.0f - static_cast<float>(i + 1) / static_cast<float>(dryFade)) : 0.0f;
         }
+        lastOutValid_ = false;
         fadeIn_ = 0;
         quietFrames_ = 0;
         metrics_.silencedFrames.fetch_add(1, std::memory_order_relaxed);
@@ -1421,7 +1578,7 @@ void VoiceIsolator::workerReset() {
     }
     down_.reset();
     up_.reset();
-    metrics_.inferencePeakUs.store(0.0f, std::memory_order_relaxed); // measured afresh for this model / chunk size
+    metrics_.inferencePeakUsPerHop.store(0.0f, std::memory_order_relaxed); // measured afresh for this model / chunk size
     // A fresh stream starts unmuted; the checker starts judging afresh, and older state resets are void.
     gateGain_ = 1.0f;
     gate_.store(kGateOpen, std::memory_order_release);
@@ -1439,6 +1596,19 @@ void VoiceIsolator::workerProcess() {
     if (!model_ || !stream_ || workerFailed_.load(std::memory_order_relaxed)) {
         inRing_.skip(inRing_.available());
         return;
+    }
+    if (hotPending_.exchange(false, std::memory_order_acq_rel)) {
+        // Same chunk size, different session (e.g. more threads): swapped between two inferences. The voice's LSTM
+        // state lives in stream_, so the isolation continues without a restart and without a gap.
+        std::unique_ptr<voxlock::IChunkModel> hot;
+        {
+            std::lock_guard lock(modelMutex_);
+            hot = std::move(hotModel_);
+        }
+        if (hot && hot->framesPerRun() == stream_->framesPerRun()) {
+            model_ = std::make_unique<TimedModel>(std::move(hot), metrics_);
+            metrics_.inferencePeakUsPerHop.store(0.0f, std::memory_order_relaxed);
+        }
     }
     for (;;) {
         const std::size_t count = inRing_.pop(in48_.data(), in48_.size());

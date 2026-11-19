@@ -14,6 +14,10 @@
 //   --set key=value   set a chain parameter for the real-time run (keys as in settings.json, e.g.
 //                     --set gateUseVad=0 --set gateThresholdDb=-36); repeatable
 //   --spin 0|1        ONNX Runtime intra-op thread spinning (offline mode; the app uses 0)
+//   --threads N       ONNX Runtime intra-op threads (offline mode; default 2)
+//   --inter N         offline mode: N > 1 runs independent graph branches in parallel on N threads
+//   --opt 0|1|2|99    offline mode: ONNX Runtime graph optimisation level (99 = all, the app's setting)
+//   --profile prefix  offline mode: write ONNX Runtime's per-node timing profile to <prefix>_<date>.json
 //   --log file        write the application log (e.g. which voice sample was chosen) to `file`
 //   --debug           include debug messages in the log (e.g. every voice-check similarity)
 //
@@ -143,7 +147,7 @@ int runSimilarity(const std::vector<float>& voice16k, const std::vector<float>& 
 }
 
 int runOffline(const std::vector<float>& voice16k, const std::vector<float>& input16k, const std::string& outPath, int k,
-               bool spin) {
+               bool spin, int threads, const std::wstring& profile, int opt, int inter) {
     std::string error;
     const std::filesystem::path dir = exeDirectory();
     auto runtime = voxlock::Runtime::create(dir, dir / L"models" / L"voxlock", error);
@@ -161,6 +165,10 @@ int runOffline(const std::vector<float>& voice16k, const std::vector<float>& inp
     voxlock::ChunkModelOptions options;
     options.framesPerRun = k;
     options.allowSpinning = spin;
+    options.threads = threads;
+    options.profilePrefix = profile;
+    options.optimizationLevel = opt;
+    options.interOpThreads = inter;
     const std::int64_t t0 = HighResClock::now();
     auto inner = runtime->createChunkModel(tensors, options, error);
     if (!inner) {
@@ -357,6 +365,10 @@ int main(int argc, char** argv) {
     bool spin = false;
     std::vector<std::pair<std::string, float>> overrides;
     int k = 2;
+    int threads = 2;
+    std::wstring profile;
+    int opt = 99;
+    int inter = 1;
     std::string processor = "auto";
     std::string model = "voxlock";
     for (int i = 1; i < argc; ++i) {
@@ -370,6 +382,10 @@ int main(int argc, char** argv) {
         else if (a == "--isolator-only") isolatorOnly = true;
         else if (a == "--k") k = std::max(1, std::atoi(next().c_str()));
         else if (a == "--spin") spin = next() != "0";
+        else if (a == "--threads") threads = std::max(1, std::atoi(next().c_str()));
+        else if (a == "--inter") inter = std::max(1, std::atoi(next().c_str()));
+        else if (a == "--opt") opt = std::atoi(next().c_str());
+        else if (a == "--profile") profile = std::filesystem::path(next()).wstring();
         else if (a == "--log") Logger::instance().open(next());
         else if (a == "--debug") Logger::instance().setLevel(LogLevel::Debug);
         else if (a == "--processor") processor = next();
@@ -393,5 +409,5 @@ int main(int argc, char** argv) {
     if (similarity) {
         return runSimilarity(voice16k, input);
     }
-    return offline ? runOffline(voice16k, input, outPath, k, spin) : runRealtime(voice16k, input, outPath, isolatorOnly, overrides, processor, model);
+    return offline ? runOffline(voice16k, input, outPath, k, spin, threads, profile, opt, inter) : runRealtime(voice16k, input, outPath, isolatorOnly, overrides, processor, model);
 }

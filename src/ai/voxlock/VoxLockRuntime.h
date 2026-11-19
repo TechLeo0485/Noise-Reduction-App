@@ -24,6 +24,9 @@ struct ChunkModelOptions {
     int threads = 2;        // intra-op threads, including the calling thread
     bool allowSpinning = false; // pool threads sleep between chunks: ~0.4 instead of ~1 core, no measurable dropout difference
     int dmlDevice = -1;         // >= 0: run on this GPU with DirectML (its IDXGIFactory::EnumAdapters index); -1: CPU
+    int interOpThreads = 1;     // > 1: run independent branches of the graph in parallel (ORT_PARALLEL)
+    int optimizationLevel = 99; // ONNX Runtime graph optimisation: 0 off, 1 basic, 2 extended, 99 all (default)
+    std::wstring profilePrefix; // tools only: ONNX Runtime per-node profile written to <prefix>_<date>.json
 };
 
 // ONNX Runtime (CPU) + the VoxLock INT8 Full graphs. Non-real-time: every method may block for a while

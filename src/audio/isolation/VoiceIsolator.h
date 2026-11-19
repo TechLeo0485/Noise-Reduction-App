@@ -48,13 +48,15 @@ struct ProcessorTrial {
     int threads = 0;       // intra-op threads (1 on a GPU)
     double p50Ms = 0.0;
     double p95Ms = 0.0;
+    double p99Ms = 0.0;
     bool realTime = false; // p50 <= 75 % and p95 <= 100 % of the chunk's duration
+    bool robust = false;   // also p50 <= 60 % and p99 <= 100 %: keeps up while the computer is busy with other work
     std::string error;     // the processor could not run the model (then the other fields are unset)
 };
 
-// Picks the processor to use from calibration results: among those that keep up, the smallest chunk (lowest
-// latency), then the most headroom (p95 / chunk duration); if none keeps up, the most headroom. Results with an
-// error are skipped. Returns -1 if none ran.
+// Picks the processor to use from calibration results: a robust one first (room to spare while the computer is busy),
+// then one that keeps up; among equals the smallest chunk (lowest latency), then the most headroom (p95 / chunk
+// duration); if none keeps up, the most headroom. Results with an error are skipped. Returns -1 if none ran.
 [[nodiscard]] int pickProcessor(const std::vector<ProcessorTrial>& trials);
 
 struct IsolationStatus {
@@ -87,6 +89,7 @@ struct IsolationFrameInfo {
     bool enabled = false;
     bool delivering = false;     // this frame carries isolated audio (false: silence or isolation off)
     int latencySamples = 0;      // delay of the isolated audio behind the microphone at 48 kHz
+    bool concealed = false;      // the worker was late: the frame is the last isolated frame mirrored and faded
 };
 
 // Strict Voice Isolation: keeps only the enrolled voice (VoxLock target-speaker extraction).
@@ -190,6 +193,7 @@ public:
         std::atomic<std::uint64_t> modelFailures{0};  // inference errors (each mutes until restart)
         std::atomic<std::uint64_t> restarts{0};
         std::atomic<std::uint64_t> silencedFrames{0}; // enabled, but no isolated audio was available
+        std::atomic<std::uint64_t> concealedFrames{0}; // late chunks filled from the last isolated frame
         std::atomic<std::uint64_t> isolatedFrames{0};
         std::atomic<std::uint64_t> latencyCaps{0};    // backlog above the delay limit was dropped
         std::atomic<std::uint64_t> voiceCheckMutes{0}; // the voice check muted another voice
@@ -197,7 +201,7 @@ public:
         std::atomic<bool> voiceGateOpen{true};        // false: muted because someone else is speaking
         std::atomic<float> latencyMs{0.0f};           // measured delay of the isolated voice (48 kHz in/out)
         std::atomic<float> lastInferenceUs{0.0f};
-        std::atomic<float> inferencePeakUs{0.0f};    // recent peak of the per-chunk inference time (decays)
+        std::atomic<float> inferencePeakUsPerHop{0.0f}; // recent peak inference time per 8 ms hop (decays)
         std::atomic<bool> delivering{false};
         SpscRingBuffer<float> inferenceUs{1024};     // per chunk.onnx call, drained by the UI
     };
@@ -230,7 +234,12 @@ private:
     // The 3 s voice sample for a whole recording (see enroll()). Reports progress as `state` + busy.
     [[nodiscard]] std::vector<float> chooseVoiceSample(const std::vector<float>& audio16k, IsolationState state);
     [[nodiscard]] double savedRecordingSeconds() const;
-    void publish(std::unique_ptr<voxlock::IChunkModel> model, int framesPerRun);
+    // Hands a model to the worker; the stream restarts with it. deferFrames > 0: an optional switch, which waits for a
+    // pause in the voice (at most that many 10 ms frames) so the restart's short silence is not heard.
+    void publish(std::unique_ptr<voxlock::IChunkModel> model, int framesPerRun, int deferFrames = 0);
+    // A session for the chunk size already running (e.g. more threads): swapped by the worker between two inferences,
+    // without a restart.
+    void swapInPlace(std::unique_ptr<voxlock::IChunkModel> model);
     void requestRestart() noexcept;
     void workerReset();
     void workerProcess();
@@ -264,6 +273,9 @@ private:
     };
     std::deque<HealthSample> health_;
     std::chrono::steady_clock::time_point lastBusyWarning_{}; // monitor: "too busy" logged at most once a minute
+    int calibratedFramesPerRun_ = 0;                   // loader: the chunk size calibration chose (0: none / light)
+    std::chrono::steady_clock::time_point lastLateTime_{}; // monitor: when the last late chunk was seen
+    std::uint64_t lastUnderrunsSeen_ = 0;              // monitor
 
     // Loader thread
     std::mutex loaderMutex_;
@@ -277,6 +289,10 @@ private:
     // Model hand-over: loader -> worker (taken at the next restart)
     std::mutex modelMutex_;
     std::unique_ptr<voxlock::IChunkModel> pendingModel_;
+    std::unique_ptr<voxlock::IChunkModel> hotModel_;   // swapInPlace(), guarded by modelMutex_
+    std::atomic<bool> hotPending_{false};
+    std::atomic<int> deferFrames_{0};
+    std::atomic<std::uint32_t> appliedGeneration_{0};  // capture thread: the model generation actually running                  // publish(): how long the capture thread may wait for a pause
     int pendingFramesPerRun_ = 0;
     bool pendingClear_ = false;
     std::atomic<std::uint32_t> modelGeneration_{0};
@@ -353,6 +369,10 @@ private:
     int quietFrames_ = 0;
     std::array<float, 2 * kFrameSize> trimScratch_{};
     std::array<float, kFrameSize> scratch_{};
+    std::array<float, kFrameSize> lastOut_{};  // last frame sent out (isolated or concealed), for gap concealment
+    bool lastOutValid_ = false;
+    int concealed_ = 0;                        // late frames concealed in a row
+    int deferredFrames_ = 0;                   // frames an optional model switch has waited for a pause
 
     // Enrollment recording: capture thread -> recordRing_ -> pumpRecording() -> recorded16k_
     SpscRingBuffer<float> recordRing_;

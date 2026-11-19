@@ -128,6 +128,18 @@ TEST(ProcessorChoice, LowestLatencyThatKeepsUpWins) {
     EXPECT_EQ(pickProcessor({trial("cpu", 2, 8, 10), trial("gpu", 2, 8, 10.1)}), 0);
 }
 
+TEST(ProcessorChoice, RobustBeatsOnlyJustKeepingUp) {
+    // The CPU only just keeps up with 16 ms chunks (72 % load, falls behind once anything else runs); the GPU has room
+    // to spare at 24 ms: the GPU, despite 8 ms more delay.
+    ProcessorTrial cpu = trial("cpu", 2, 11.4, 13.8);
+    ProcessorTrial gpu = trial("gpu", 3, 12.1, 13.9);
+    gpu.robust = true;
+    EXPECT_EQ(pickProcessor({cpu, gpu}), 1);
+    // Both robust: the lower latency again.
+    cpu.robust = true;
+    EXPECT_EQ(pickProcessor({cpu, gpu}), 0);
+}
+
 TEST(ProcessorChoice, KeepingUpBeatsSpeedAndFailuresAreSkipped) {
     // The CPU is too slow even at 40 ms; the GPU keeps up at 40 ms.
     EXPECT_EQ(pickProcessor({trial("cpu", 5, 35, 45), trial("gpu", 5, 23, 24)}), 1);

@@ -100,11 +100,21 @@ RunResult run(VoiceIsolator& isolator, const std::vector<float>& x, bool enabled
     return r;
 }
 
-// Every frame must be either silence or the input delayed by the reported latency - never the
-// undelayed microphone.
+// Every frame must be either silence, the input delayed by the reported latency, or a concealed late frame (the
+// previous output frame mirrored in time and faded) - never the undelayed microphone.
 void expectFailClosed(const std::vector<float>& x, const RunResult& r, std::size_t firstFrame = 0) {
     for (std::size_t f = firstFrame; f < r.info.size(); ++f) {
         const float* y = r.out.data() + f * kFrame;
+        if (r.info[f].concealed) {
+            ASSERT_GT(f, 0u) << "nothing to conceal with";
+            const float* previous = y - kFrame;
+            for (std::size_t i = 0; i < kFrame; ++i) {
+                const float mirror = previous[kFrame - 1 - i];
+                ASSERT_LE(std::fabs(y[i]), std::fabs(mirror) + 1e-6f) << "frame " << f << ": concealment louder than its source";
+                ASSERT_GE(y[i] * mirror, 0.0f) << "frame " << f << ": concealment is not the mirrored previous frame";
+            }
+            continue;
+        }
         // Faded in: the first frame after silence, and the frame after dropped backlog (the delay got shorter).
         const bool fadeIn = f == 0 || !r.info[f - 1].delivering ||
                             r.info[f].latencySamples < r.info[f - 1].latencySamples;
@@ -331,6 +341,25 @@ TEST(VoiceIsolator, RaisesChunkSizeWhenTheCpuFallsBehind) {
     EXPECT_GE(st.framesPerRun, 3) << "the monitor should have switched to larger chunks";
     EXPECT_GE(st.adaptations, 1);
     EXPECT_EQ(st.state, IsolationState::Ready);
+}
+
+TEST(VoiceIsolator, LateChunksAreConcealedBrieflyFromIsolatedAudioOnly) {
+    VoiceIsolator isolator;
+    isolator.initializeWithModel(identity(nullptr, 25), 2); // too slow for 16 ms chunks: late chunks
+    const std::vector<float> x = testSignal(48000 * 4);
+    const RunResult r = run(isolator, x, true, 10);
+    expectFailClosed(x, r); // concealed frames are the mirrored previous output, never the microphone
+    int run = 0;
+    int longest = 0;
+    std::size_t concealed = 0;
+    for (const auto& i : r.info) {
+        run = i.concealed ? run + 1 : 0;
+        longest = std::max(longest, run);
+        concealed += i.concealed ? 1 : 0;
+    }
+    EXPECT_GT(concealed, 0u) << "late chunks should be concealed instead of left silent";
+    EXPECT_LE(longest, 2) << "concealment must fade to silence within 20 ms";
+    EXPECT_EQ(isolator.metrics().concealedFrames.load(), concealed);
 }
 
 TEST(VoiceIsolator, NeverSwitchesToLightIsolationByItself) {

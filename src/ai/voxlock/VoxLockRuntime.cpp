@@ -415,6 +415,16 @@ std::unique_ptr<IChunkModel> Runtime::createChunkModel(const EnrollmentTensors& 
         // Static shapes let the optimiser fold the remaining shape arithmetic as well.
         so.AddFreeDimensionOverrideByName("S", chunkInputSamples(k));
         so.AddFreeDimensionOverrideByName("K", k);
+        if (!options.profilePrefix.empty()) {
+            so.EnableProfiling(options.profilePrefix.c_str());
+        }
+        if (options.interOpThreads > 1 && options.dmlDevice < 0) {
+            so.SetExecutionMode(ExecutionMode::ORT_PARALLEL);
+            so.SetInterOpNumThreads(options.interOpThreads);
+        }
+        if (options.optimizationLevel != 99) {
+            so.SetGraphOptimizationLevel(static_cast<GraphOptimizationLevel>(std::clamp(options.optimizationLevel, 0, 2)));
+        }
         if (options.dmlDevice >= 0 && !appendDirectMl(so, options.dmlDevice, error)) {
             return nullptr;
         }
